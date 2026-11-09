@@ -19,6 +19,7 @@
   #hint { position: fixed; top: 84px; left: 50%; transform: translateX(-50%); font-size: 38px; font-weight: 800; color: #fff;
     text-shadow: 0 3px 0 rgba(0,0,0,.3); transition: opacity .5s; pointer-events: none; opacity: 0; white-space: nowrap; }
   #pax { position: fixed; top: 16px; left: 16px; font-size: 34px; background: rgba(255,255,255,.55); border-radius: 18px; padding: 6px 14px; pointer-events: none; max-width: 45vw; }
+  #weather { position: fixed; top: 14px; right: 18px; font-size: 44px; pointer-events: none; text-shadow: 0 2px 6px rgba(0,0,0,.25); }
   #help { position: fixed; right: 12px; bottom: 10px; font-size: 13px; color: rgba(0,0,0,.55); pointer-events: none; }
 </style>
 <script type="importmap">
@@ -31,6 +32,7 @@
 <body>
 <div id="start">🚂 Building the world…</div>
 <div id="pax"></div>
+<div id="weather"></div>
 <div id="hint">Press ⬆️ to go!</div>
 <div id="arrows"><div class="arrow" id="aL">⬅</div><div class="arrow" id="aR">➡</div></div>
 <div id="help">⬆ go · ⬇ slow · ⬅ ➡ pick track · space horn &amp; crossing lights · C camera · F fullscreen</div>

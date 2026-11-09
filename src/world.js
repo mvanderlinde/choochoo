@@ -14,6 +14,7 @@ export function createWorld(scene) {
   const clouds = buildClouds(scene, mulberry32(42));
 
   return {
+    skyMat: sky.material, water, clouds, cloudMat: clouds[0].children[0].material,
     update(dt, camera) {
       const cp = camera.position;
       sky.position.copy(cp);

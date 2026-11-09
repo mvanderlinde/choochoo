@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { naturalHeight, mountainMask, smooth, mix, perlin, WATER_Y, mulberry32 } from './heights.js';
+import { naturalHeight, mountainMask, smooth, mix, perlin, WATER_Y, mulberry32, groundSnow } from './heights.js';
 import { windowTexture } from './textures.js';
 
 // Infinite terrain in square chunks that are built around the train and dropped behind it.
@@ -31,6 +31,17 @@ export class Terrain {
       coloredGeo(new THREE.IcosahedronGeometry(3, 1).translate(0, 5.2, 0), 0x5d9e3c),
       coloredGeo(new THREE.CylinderGeometry(0.35, 0.5, 3.6, 6).translate(0, 1.8, 0), 0x6e4a2c),
     ]);
+    // winter versions: snow-capped pines and frosty round trees
+    this.snowPineGeo = mergeGeometries([
+      coloredGeo(new THREE.ConeGeometry(2.3, 7, 8).translate(0, 5.5, 0), 0x2f6b34),
+      coloredGeo(new THREE.ConeGeometry(1.75, 4.6, 8).translate(0, 7.0, 0), 0xf4f7fb),
+      coloredGeo(new THREE.CylinderGeometry(0.3, 0.45, 2.5, 6).translate(0, 1.25, 0), 0x6e4a2c),
+    ]);
+    this.snowRoundGeo = mergeGeometries([
+      coloredGeo(new THREE.IcosahedronGeometry(3, 1).translate(0, 5.2, 0), 0xdde8e2),
+      coloredGeo(new THREE.CylinderGeometry(0.35, 0.5, 3.6, 6).translate(0, 1.8, 0), 0x6e4a2c),
+    ]);
+    this.snowRoofMat = new THREE.MeshStandardMaterial({ color: 0xf4f7fb, roughness: 0.9 });
     this.rockGeo = new THREE.IcosahedronGeometry(1, 0);
     const wTex = windowTexture();
     this.buildingMats = [0xf2d6a2, 0xf4a6a6, 0xa6c8f4, 0xc9f2a6, 0xf7f0e0, 0xe8c1f0, 0xffd27a]
@@ -135,6 +146,7 @@ export class Terrain {
       c.lerp(rock, smooth(0.86, 0.7, n.y));
       c.lerp(snow, smooth(90, 110, h + perlin.noise(x / 30, z / 30, 5) * 12));
       c.lerp(sand, smooth(WATER_Y + 1.6, WATER_Y + 0.4, h));
+      c.lerp(snow, 0.93 * groundSnow(x, z) * smooth(0.55, 0.8, n.y)); // winter regions
       const tr = this.net.nearest(x, z, 6);
       if (tr && tr.mode === 'normal') c.lerp(gravel, smooth(6, 3, tr.d));
       col.set([c.r, c.g, c.b], v * 3);
@@ -170,18 +182,21 @@ export class Terrain {
   addTrees(group, x0, z0, rand) {
     const density = smooth(-0.35, 0.35, perlin.noise(x0 / 600 + 0.3, z0 / 600 + 0.3, 4.4));
     const attempts = 15 + density * 110;
-    const pines = [], rounds = [];
+    const pines = [], rounds = [], snowPines = [], snowRounds = [];
     for (let i = 0; i < attempts; i++) {
       const x = x0 + rand() * C, z = z0 + rand() * C;
       if (this.inTown(x, z, 8) || this.net.nearest(x, z, 10) || this.roads.near(x, z, 10)) continue;
       const h = this.heightAt(x, z);
       if (h < WATER_Y + 0.8 || h > 110) continue;
       const t = { x, y: h - 0.2, z, s: 0.7 + rand() * 0.8, ry: rand() * 6.28, hue: rand() };
-      (rand() < 0.3 + mountainMask(x, z) * 0.6 ? pines : rounds).push(t);
+      const pine = rand() < 0.3 + mountainMask(x, z) * 0.6, wintry = groundSnow(x, z) > 0.5;
+      (wintry ? (pine ? snowPines : snowRounds) : (pine ? pines : rounds)).push(t);
     }
     const col = new THREE.Color();
     this.instanced(group, this.pineGeo, this.treeMat, pines, (t) => col.setHSL(0.28 + t.hue * 0.06, 0.25, 0.85 + t.hue * 0.15));
     this.instanced(group, this.roundGeo, this.treeMat, rounds, (t) => col.setHSL(0.15 + t.hue * 0.15, 0.4, 0.8 + t.hue * 0.2));
+    this.instanced(group, this.snowPineGeo, this.treeMat, snowPines);
+    this.instanced(group, this.snowRoundGeo, this.treeMat, snowRounds);
   }
 
   addRocks(group, x0, z0, rand) {
@@ -226,7 +241,7 @@ export class Terrain {
         m.userData.own = true;
         group.add(m);
         if (!b.tall) {
-          const roof = new THREE.Mesh(this.roofGeo, this.roofMats[b.roof]);
+          const roof = new THREE.Mesh(this.roofGeo, groundSnow(b.x, b.z) > 0.5 ? this.snowRoofMat : this.roofMats[b.roof]);
           roof.scale.set(b.w + 0.8, 3.2, b.d + 0.8);
           roof.position.set(b.x, y + b.h + 1.6, b.z);
           roof.rotation.y = b.yaw;

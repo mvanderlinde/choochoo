@@ -6,6 +6,8 @@ import { Roads } from './roads.js';
 import { createWorld, SKY_HORIZON } from './world.js';
 import { Train } from './train.js';
 import { Sound } from './audio.js';
+import { Weather } from './weather.js';
+import { setClimateSeed } from './heights.js';
 import { spanAt } from './structures.js';
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -22,7 +24,8 @@ scene.background = new THREE.Color(SKY_HORIZON);
 scene.fog = new THREE.Fog(SKY_HORIZON, 250, 820);
 const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.5, 4000);
 
-scene.add(new THREE.HemisphereLight(0xdff1ff, 0x5a7a3a, 1.2));
+const hemi = new THREE.HemisphereLight(0xdff1ff, 0x5a7a3a, 1.2);
+scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xfff3dd, 2.6);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
@@ -34,6 +37,7 @@ const SUN_OFFSET = new THREE.Vector3(120, 200, 80);
 
 // ---------- build the world ----------
 const seed = Number(new URLSearchParams(location.search).get("seed")) || Math.floor(Math.random() * 1e9); // new world every visit (or ?seed=123)
+setClimateSeed(seed);
 const net = new TrackNetwork(scene, seed);
 const stations = new StationManager(scene);
 const roads = new Roads(scene, net, stations, seed + 1);
@@ -60,7 +64,8 @@ net.expand(train.edge, train.d);
 const world = createWorld(scene);
 terrain.update(train.loco.group.position, Infinity);
 const sound = new Sound();
-window.game = { train, net, stations, terrain, roads }; // handy for debugging in the console
+const weather = new Weather(scene, world, { sun, hemi, sound });
+window.game = { train, net, stations, terrain, roads, weather }; // handy for debugging in the console
 
 // ---------- input ----------
 const held = new Set();
@@ -308,6 +313,7 @@ renderer.setAnimationLoop(() => {
 
   updateCamera(dt);
   world.update(dt, camera);
+  weather.update(dt, train.loco.group.position, camera, tunnelBlend);
   const lp = train.loco.group.position;
   sun.position.copy(lp).add(SUN_OFFSET);
   sun.target.position.copy(lp);

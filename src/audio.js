@@ -163,6 +163,21 @@ export class Sound {
     for (const s of [0, 0.22]) { this.tone(440, t + s, 0.15, 0.06, 'square'); this.tone(554, t + s, 0.15, 0.05, 'square'); }
   }
 
+  // steady rain hiss, v = 0..1
+  setRain(v) {
+    if (!this.ctx) return;
+    if (!this.rainGain) {
+      const ctx = this.ctx;
+      const n = ctx.createBufferSource(); n.buffer = this.noise; n.loop = true;
+      const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 900;
+      const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 7000;
+      this.rainGain = ctx.createGain(); this.rainGain.gain.value = 0;
+      n.connect(hp).connect(lp).connect(this.rainGain).connect(this.master);
+      n.start();
+    }
+    this.rainGain.gain.setTargetAtTime(v * 0.1, this.ctx.currentTime, 0.3);
+  }
+
   say(text) {
     try {
       const u = new SpeechSynthesisUtterance(text);

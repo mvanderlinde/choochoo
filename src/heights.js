@@ -43,3 +43,12 @@ export function naturalHeight(x, z) {
   const lake = smooth(0.18, 0.4, fbm(x / 600 + 0.5, z / 600 + 0.5, 2, 21.1)) * (1 - M);
   return mix(h, -6, lake);
 }
+
+// ---------- climate ----------
+// Large regions that are cold (snow on the ground) or wet (clouds, rain/snow), shifted per world.
+let climate = [0, 0];
+export function setClimateSeed(seed) { const r = mulberry32(seed); climate = [r() * 1000, r() * 1000]; }
+export function coldness(x, z) { return fbm(x / 2600 + climate[0], z / 2600 + climate[1], 2, 31.7); }
+export function groundSnow(x, z) { return smooth(0.08, 0.16, coldness(x, z)); }
+// Wet weather fronts drift slowly over time (t in seconds).
+export function wetness(x, z, t) { return fbm(x / 900 + climate[1] + t * 0.005, z / 900 + climate[0] - t * 0.003, 2, 41.3); }
