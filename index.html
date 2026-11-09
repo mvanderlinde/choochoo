@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Choo Choo Train</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #cfe6ff; font-family: system-ui, -apple-system, sans-serif; user-select: none; }
+  canvas { display: block; }
+  #start { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    background: rgba(40, 90, 160, .55); color: #fff; font-size: 72px; font-weight: 800; text-shadow: 0 4px 0 rgba(0,0,0,.25);
+    cursor: pointer; z-index: 10; text-align: center; }
+  #start small { font-size: 26px; font-weight: 600; margin-top: 18px; opacity: .9; }
+  #start.hidden { display: none; }
+  #arrows { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%); display: flex; gap: 48px; transition: opacity .4s; pointer-events: none; }
+  .arrow { width: 110px; height: 110px; border-radius: 50%; background: rgba(255,255,255,.35); display: flex; align-items: center; justify-content: center;
+    font-size: 70px; font-weight: 900; color: rgba(255,255,255,.75); transition: all .2s; }
+  .arrow.on { background: #33c24a; color: #fff; transform: scale(1.15); box-shadow: 0 0 30px #8dff97; }
+  #hint { position: fixed; top: 84px; left: 50%; transform: translateX(-50%); font-size: 38px; font-weight: 800; color: #fff;
+    text-shadow: 0 3px 0 rgba(0,0,0,.3); transition: opacity .5s; pointer-events: none; opacity: 0; white-space: nowrap; }
+  #pax { position: fixed; top: 16px; left: 16px; font-size: 34px; background: rgba(255,255,255,.55); border-radius: 18px; padding: 6px 14px; pointer-events: none; max-width: 45vw; }
+  #help { position: fixed; right: 12px; bottom: 10px; font-size: 13px; color: rgba(0,0,0,.55); pointer-events: none; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="start">🚂 Building the world…</div>
+<div id="pax"></div>
+<div id="hint">Press ⬆️ to go!</div>
+<div id="arrows"><div class="arrow" id="aL">⬅</div><div class="arrow" id="aR">➡</div></div>
+<div id="help">⬆ go · ⬇ slow · ⬅ ➡ pick track · space horn &amp; crossing lights · C camera · F fullscreen</div>
+<script type="module" src="src/main.js"></script>
+</body>
+</html>

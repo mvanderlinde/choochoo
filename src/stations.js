@@ -1,0 +1,258 @@
+import * as THREE from 'three';
+import { mulberry32 } from './heights.js';
+import { textTexture } from './textures.js';
+
+const V3 = THREE.Vector3;
+const NAMES = ['Maple Hill', 'Bunny Hollow', 'Sunny Meadow', 'Pine Valley', 'Duck Pond', 'Apple Orchard',
+  'Teddy Town', 'Rainbow Bridge', 'Honey Creek', 'Puddle Lane', 'Acorn Grove', 'Blueberry Bay',
+  'Cupcake Corner', 'Pebble Beach', 'Daisy Field', 'Moose Mountain', 'Lollipop Lane',
+  'Bumblebee Junction', 'Starlight Station', 'Froggy Falls', 'Pancake Point', 'Owl Woods'];
+export const EMOJI = ['🧑', '👩', '👨', '👧', '👦', '👵', '👴', '🧒', '👩‍🦰', '👨‍🦱', '🧔', '👱'];
+
+// ---------- little people ----------
+const legGeo = new THREE.BoxGeometry(0.16, 0.8, 0.18).translate(0, -0.4, 0);
+const armGeo = new THREE.BoxGeometry(0.12, 0.62, 0.14).translate(0, -0.31, 0);
+const bodyGeo = new THREE.CapsuleGeometry(0.27, 0.4, 4, 10);
+const headGeo = new THREE.SphereGeometry(0.22, 14, 10);
+const hatGeo = new THREE.CylinderGeometry(0.2, 0.25, 0.16, 12);
+const matCache = new Map();
+const mat = (c) => {
+  if (!matCache.has(c)) matCache.set(c, new THREE.MeshStandardMaterial({ color: c, roughness: 0.8 }));
+  return matCache.get(c);
+};
+const SHIRTS = [0xe63946, 0x2a9d8f, 0xf4a261, 0x457b9d, 0x9b5de5, 0xffbe0b, 0x06d6a0, 0xff70a6];
+const PANTS = [0x264653, 0x3d405b, 0x5c4033, 0x1d3557];
+const SKIN = [0xf1c27d, 0xe0ac69, 0xc68642, 0x8d5524, 0xffdbac];
+const pick = (a, r) => a[Math.floor(r() * a.length)];
+
+class Person {
+  constructor(scene, pos, rand, emoji) {
+    this.scene = scene;
+    this.emoji = emoji ?? pick(EMOJI, rand);
+    const g = this.group = new THREE.Group();
+    const part = (geo, m, x, y, parent = g) => { const o = new THREE.Mesh(geo, m); o.position.set(x, y, 0); o.castShadow = true; parent.add(o); return o; };
+    const pants = mat(pick(PANTS, rand)), shirt = mat(pick(SHIRTS, rand)), skin = mat(pick(SKIN, rand));
+    this.legs = [0.1, -0.1].map((x) => { const p = new THREE.Group(); p.position.set(x, 0.85, 0); g.add(p); part(legGeo, pants, 0, 0, p); return p; });
+    part(bodyGeo, shirt, 0, 1.25);
+    this.arms = [0.36, -0.36].map((x) => { const p = new THREE.Group(); p.position.set(x, 1.6, 0); g.add(p); part(armGeo, shirt, 0, 0, p); return p; });
+    part(headGeo, skin, 0, 1.92);
+    if (rand() < 0.4) part(hatGeo, mat(pick(SHIRTS, rand)), 0, 2.12);
+    g.scale.setScalar(0.85);
+    g.position.copy(pos);
+    scene.add(g);
+    this.waypoints = [];
+    this.speed = 1.5 + rand() * 0.4;
+    this.t = rand() * 10;
+    this.wave = false;
+    this.facing = null;
+  }
+
+  walkTo(points, onArrive) { this.waypoints = points.map((p) => p.clone()); this.onArrive = onArrive; }
+
+  update(dt) {
+    this.t += dt;
+    const g = this.group;
+    if (this.waypoints.length) {
+      const tgt = this.waypoints[0];
+      const dx = tgt.x - g.position.x, dz = tgt.z - g.position.z, d = Math.hypot(dx, dz), step = this.speed * dt;
+      g.position.y += (tgt.y - g.position.y) * Math.min(1, dt * 6);
+      if (d <= step) {
+        g.position.x = tgt.x; g.position.z = tgt.z;
+        this.waypoints.shift();
+        if (!this.waypoints.length) { const cb = this.onArrive; this.onArrive = null; cb?.(this); }
+      } else {
+        g.position.x += (dx / d) * step; g.position.z += (dz / d) * step;
+        g.rotation.y = Math.atan2(dx, dz);
+      }
+      const sw = Math.sin(this.t * 9) * 0.6;
+      this.legs[0].rotation.x = sw; this.legs[1].rotation.x = -sw;
+      this.arms[0].rotation.x = -sw * 0.8; this.arms[1].rotation.x = sw * 0.8;
+      this.arms[1].rotation.z = 0;
+    } else {
+      this.legs[0].rotation.x = this.legs[1].rotation.x = 0;
+      this.arms[0].rotation.x = 0; this.arms[1].rotation.x = 0;
+      this.arms[1].rotation.z = this.wave ? -2.6 + Math.sin(this.t * 10) * 0.35 : 0;
+      if (this.facing !== null) g.rotation.y = this.facing;
+    }
+  }
+
+  dispose() { this.scene.remove(this.group); }
+}
+
+// ---------- stations ----------
+class Station {
+  constructor(scene, edge, name, seed) {
+    const rand = this.rand = mulberry32(seed);
+    this.scene = scene; this.edge = edge; this.name = name;
+    const L = edge.length;
+    this.trackPos = edge.pointAt(L / 2, new V3());
+    this.t = edge.tangentAt(L / 2, new V3()); this.t.y = 0; this.t.normalize();
+    const side = rand() < 0.5 ? 1 : -1;
+    this.s = new V3(-this.t.z, 0, this.t.x).multiplyScalar(side); // track -> platform
+    this.platform = this.trackPos.clone().addScaledVector(this.s, 3.9);
+    this.platformTop = this.trackPos.y + 0.9;
+    this.townY = this.trackPos.y - 0.5;
+    this.townR = 105;
+    this.served = false;
+    this.busy = false;
+    this.timers = [];
+    this.people = [];
+    this.group = this.buildPlatform(-side);
+    this.buildSpots();
+
+    this.waiting = [];
+    const n = 3 + Math.floor(rand() * 4);
+    for (let i = 0; i < n; i++) {
+      const p = this.platform.clone().addScaledVector(this.t, (rand() - 0.5) * 30).addScaledVector(this.s, rand() * 0.8 - 0.2);
+      p.y = this.platformTop;
+      const person = new Person(scene, p, rand);
+      person.facing = Math.atan2(-this.s.x, -this.s.z);
+      this.people.push(person);
+      this.waiting.push(person);
+    }
+  }
+
+  buildPlatform(away) {
+    const g = new THREE.Group();
+    g.position.copy(this.platform);
+    g.lookAt(this.platform.clone().add(this.t)); // local +z = along track; local x * away = away from track
+    const add = (geo, color, x, y, z) => {
+      const m = new THREE.Mesh(geo, color.isMaterial ? color : mat(color));
+      m.position.set(x, y, z); m.castShadow = m.receiveShadow = true; g.add(m); return m;
+    };
+    add(new THREE.BoxGeometry(3.6, 1.6, 40), 0xbdbdbd, 0, 0.1, 0);
+    add(new THREE.BoxGeometry(0.3, 0.02, 40), 0xffd400, -away * 1.5, 0.91, 0);
+    for (const z of [-10, -3.3, 3.3, 10]) add(new THREE.CylinderGeometry(0.12, 0.12, 3.6, 8), 0x444444, away * 0.6, 2.7, z);
+    add(new THREE.BoxGeometry(4.4, 0.25, 26), 0xd23c3c, 0, 4.5, 0);
+    add(new THREE.BoxGeometry(6, 4.5, 11), 0xf3e2c0, away * 5.5, 1.4, 0);
+    add(new THREE.ConeGeometry(0.7071, 1, 4).rotateY(Math.PI / 4), 0xb5442f, away * 5.5, 5.0, 0).scale.set(7, 2.6, 12);
+    // name boards, back to back so they read from either side
+    const tex = textTexture(this.name);
+    const signMat = new THREE.MeshBasicMaterial({ map: tex });
+    const geo = new THREE.PlaneGeometry(9, 1.8);
+    for (const flip of [0, Math.PI]) {
+      const b = add(geo, signMat, away * 1.75, 3.3, 0);
+      b.rotation.y = -away * Math.PI / 2 + flip;
+      b.castShadow = false;
+    }
+    this.scene.add(g);
+    return g;
+  }
+
+  // Building lots for the little town around the station (placed by the terrain chunks).
+  buildSpots() {
+    const r = this.rand;
+    this.spots = [];
+    const yaw = Math.atan2(this.t.x, this.t.z);
+    for (let u = -102; u <= 102; u += 17) for (let v = -102; v <= 102; v += 17) {
+      if (Math.abs(v) < 24 || (Math.abs(v) < 30 && Math.abs(u) < 12)) continue;
+      const uu = u + (r() - 0.5) * 3, vv = v + (r() - 0.5) * 3;
+      const rad = Math.hypot(uu, vv);
+      if (rad > this.townR - 5 + r() * 12) continue;
+      const tall = Math.abs(v) > 40 && rad < 70 && r() < 0.6;
+      this.spots.push({
+        x: this.trackPos.x + this.t.x * uu + this.s.x * vv, z: this.trackPos.z + this.t.z * uu + this.s.z * vv,
+        w: 8 + r() * 5, d: 8 + r() * 5, h: tall ? 12 + r() * 20 : 5 + r() * 3, tall, yaw,
+        mat: Math.floor(r() * 7), roof: Math.floor(r() * 4),
+      });
+    }
+  }
+
+  after(delay, fn) { this.timers.push({ t: delay, fn }); }
+
+  // Coach doors that are lined up with this platform, as world positions.
+  doorsFor(train) {
+    const out = [], xw = new V3();
+    for (const car of train.cars) {
+      if (!car.doors) continue;
+      const g = car.group;
+      xw.set(1, 0, 0).applyQuaternion(g.quaternion);
+      const sideSign = xw.dot(this.s) > 0 ? 1 : -1;
+      for (const dz of car.doors) {
+        const p = g.localToWorld(new V3(sideSign * 1.5, 0, dz));
+        const rel = p.clone().sub(this.trackPos);
+        const along = rel.dot(this.t), lat = Math.abs(rel.x * this.s.x + rel.z * this.s.z);
+        if (Math.abs(along) < 19 && lat < 3) out.push(p);
+      }
+    }
+    return out;
+  }
+
+  // Called while the train is stopped. Returns true if a stop started here.
+  startStop(train, hooks) {
+    if (this.served) return false;
+    const doors = this.doorsFor(train);
+    if (!doors.length) return false;
+    this.served = true; this.busy = true;
+    const r = this.rand;
+    let pending = 0;
+    const finish = () => { this.busy = false; hooks.done(this); };
+    const onPlatform = (p, out) => { const q = p.clone().addScaledVector(this.s, out); q.y = this.platformTop; return q; };
+
+    // some passengers get off and walk into the station
+    const nOff = Math.min(train.passengers.length, 1 + Math.floor(r() * 3) + (train.passengers.length > 9 ? 2 : 0));
+    for (let i = 0; i < nOff; i++) {
+      const door = doors[Math.floor(r() * doors.length)];
+      pending++;
+      this.after(0.3 + i * 0.8, () => {
+        const emoji = train.passengers.splice(Math.floor(r() * train.passengers.length), 1)[0];
+        hooks.changed();
+        hooks.pop();
+        const p = new Person(this.scene, onPlatform(door, 0.6), r, emoji);
+        this.people.push(p);
+        const exit = onPlatform(this.platform.clone().addScaledVector(this.t, (r() - 0.5) * 4), 1.6);
+        p.walkTo([onPlatform(door, 1.4), exit], (pp) => { this.removePerson(pp); if (--pending === 0) finish(); });
+      });
+    }
+    // everyone waiting walks to the nearest door and gets on
+    this.waiting.forEach((p, i) => {
+      pending++;
+      let best = doors[0];
+      for (const d of doors) if (d.distanceTo(p.group.position) < best.distanceTo(p.group.position)) best = d;
+      this.after(0.8 + i * 0.7, () => {
+        p.wave = false;
+        p.walkTo([onPlatform(best, 1.0), onPlatform(best, -0.4)], (pp) => {
+          this.removePerson(pp);
+          train.passengers.push(pp.emoji);
+          hooks.changed();
+          hooks.pop();
+          if (--pending === 0) finish();
+        });
+      });
+    });
+    this.waiting = [];
+    if (pending === 0) finish();
+    return true;
+  }
+
+  removePerson(p) { p.dispose(); this.people = this.people.filter((x) => x !== p); }
+
+  update(dt, train) {
+    const near = train.loco.group.position.distanceTo(this.trackPos) < 160;
+    for (const p of this.waiting) p.wave = near;
+    for (const tm of this.timers) tm.t -= dt;
+    const due = this.timers.filter((tm) => tm.t <= 0);
+    this.timers = this.timers.filter((tm) => tm.t > 0);
+    for (const tm of due) tm.fn();
+    for (const p of this.people) p.update(dt);
+  }
+
+  dispose() {
+    for (const p of this.people) p.dispose();
+    this.scene.remove(this.group);
+    this.group.traverse((c) => c.geometry?.dispose());
+  }
+}
+
+export class StationManager {
+  constructor(scene) { this.scene = scene; this.list = new Set(); this.count = 0; }
+  create(edge) {
+    const st = new Station(this.scene, edge, NAMES[this.count % NAMES.length], 1000 + this.count * 7919);
+    this.count++;
+    edge.station = st;
+    this.list.add(st);
+    return st;
+  }
+  remove(st) { st.dispose(); this.list.delete(st); }
+  update(dt, train) { for (const st of this.list) st.update(dt, train); }
+}
