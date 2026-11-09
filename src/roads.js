@@ -103,6 +103,7 @@ export class Roads {
   maybeCreate(edge) {
     if (this.rand() > 0.55) return;
     const d = edge.length / 2;
+    if (edge.spans.some((sp) => d > sp.a - 50 && d < sp.b + 50)) return; // not next to tunnels or bridges
     const p = edge.pointAt(d, new V3());
     if (mountainMask(p.x, p.z) > 0.35) return;
     const t = edge.tangentAt(d, new V3()); t.y = 0; t.normalize();

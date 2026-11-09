@@ -6,6 +6,7 @@ import { Roads } from './roads.js';
 import { createWorld, SKY_HORIZON } from './world.js';
 import { Train } from './train.js';
 import { Sound } from './audio.js';
+import { spanAt } from './structures.js';
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -32,7 +33,7 @@ scene.add(sun, sun.target);
 const SUN_OFFSET = new THREE.Vector3(120, 200, 80);
 
 // ---------- build the world ----------
-const seed = Math.floor(Math.random() * 1e9); // new world every visit
+const seed = Number(new URLSearchParams(location.search).get("seed")) || Math.floor(Math.random() * 1e9); // new world every visit (or ?seed=123)
 const net = new TrackNetwork(scene, seed);
 const stations = new StationManager(scene);
 const roads = new Roads(scene, net, stations, seed + 1);
@@ -177,7 +178,10 @@ function updateStations(next, crossing) {
   } else if (activeStop) setHint(`🚉 ${activeStop.name}! Everyone is getting on and off`);
   else if (ahead && train.speed > 0.05) setHint(`🚉 ${ahead.name}! Press ⬇️ to stop`);
   else if (train.speed < 0.5) setHint('Press ⬆️ to go!');
-  else setHint('');
+  else {
+    const sp = spanAt(train.edge, train.d - 5);
+    setHint(sp?.type === 'tunnel' ? '🌑 Into the tunnel! Toot toot!' : sp?.type === 'bridge' ? '🌉 Over the bridge!' : '');
+  }
 }
 
 // ---------- level crossings ----------
@@ -202,6 +206,19 @@ function updateCrossings(dt, ahead) {
 }
 
 // ---------- camera ----------
+// Is the track at offset o metres from the train's head (negative = behind) inside a tunnel?
+function tunnelAt(o) {
+  let d = train.d + o, e = train.edge;
+  while (d > e.length) { d -= e.length; e = train.nextEdge(e); }
+  for (let i = train.history.length - 1; d < 0 && i >= 0; i--) { e = train.history[i]; d += e.length; }
+  return spanAt(e, Math.max(0, d))?.type === 'tunnel';
+}
+// Ride up front from just before the portal until the engine is well clear of the exit,
+// so the chase camera never ends up buried in the mountain.
+const inTunnelZone = () => [30, 15, 0, -15, -30, -45].some(tunnelAt);
+let tunnelBlend = 0;
+const frontPos = new THREE.Vector3(), frontLook = new THREE.Vector3();
+
 const camPos = new THREE.Vector3(), camLook = new THREE.Vector3();
 const fwd = new THREE.Vector3(), right = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0);
 const desired = new THREE.Vector3(), look = new THREE.Vector3();
@@ -233,6 +250,16 @@ function updateCamera(dt, snap) {
       look.copy(p);
       break;
   }
+  // Tunnels: fade to a camera fixed just above the front of the engine, looking down the tunnel.
+  // It's attached rigidly (no lag) so it can't drift into the tunnel walls or behind the chimney.
+  const tunnelCam = camMode !== 2 && inTunnelZone();
+  tunnelBlend = THREE.MathUtils.clamp(tunnelBlend + (tunnelCam ? dt * 2 : -dt * 1.5), 0, 1);
+  if (tunnelBlend > 0) {
+    const b = THREE.MathUtils.smoothstep(tunnelBlend, 0, 1);
+    desired.lerp(loco.localToWorld(frontPos.set(0, 4.9, 6.4)), b);
+    look.lerp(loco.localToWorld(frontLook.set(0, 3.2, 40)), b);
+    k = THREE.MathUtils.lerp(k, 1, b);
+  }
   if (activeStop && camMode !== 2) { // watch the people getting on and off
     const st = activeStop;
     desired.copy(st.platform).addScaledVector(st.s, 13).addScaledVector(st.t, -26).add({ x: 0, y: 6, z: 0 });
@@ -242,7 +269,7 @@ function updateCamera(dt, snap) {
   if (snap) k = 1;
   camPos.lerp(desired, k);
   camLook.lerp(look, k);
-  if (camMode !== 2) camPos.y = Math.max(camPos.y, terrain.heightAt(camPos.x, camPos.z) + 2);
+  if (camMode !== 2 && !tunnelCam) camPos.y = Math.max(camPos.y, terrain.heightAt(camPos.x, camPos.z) + 2);
   camera.position.copy(camPos);
   camera.lookAt(camLook);
 }

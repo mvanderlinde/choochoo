@@ -130,3 +130,20 @@ export function glowTexture() {
     g.fillStyle = grd; g.fillRect(0, 0, 64, 64);
   });
 }
+
+// Stone blocks for tunnel portals and bridge piers.
+export function stoneTexture() {
+  return canvasTex(256, 256, (g, w, h) => {
+    g.fillStyle = '#6f6a62'; g.fillRect(0, 0, w, h);
+    const rows = 8, rh = h / rows;
+    for (let r = 0; r < rows; r++) {
+      let x = r % 2 ? -32 : 0;
+      while (x < w) {
+        const bw = 48 + Math.random() * 32, v = 140 + Math.random() * 40;
+        g.fillStyle = `rgb(${v},${v * 0.96},${v * 0.9})`;
+        g.fillRect(x + 2, r * rh + 2, bw - 4, rh - 4);
+        x += bw;
+      }
+    }
+  }, true);
+}

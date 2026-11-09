@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { gravelTexture, arrowTexture } from './textures.js';
 import { trackBaseHeight, smooth, mix, mulberry32 } from './heights.js';
+import { findSpans, trackMode, sweep, rightOf, buildTunnel, buildBridge } from './structures.js';
 
 // Endless track: a tree of edges generated on demand ahead of the train.
 // Every junction splits into a left and a right branch that fan apart, so
@@ -10,7 +11,6 @@ const STEP = 8;          // spacing of curve control points (m)
 const LOOKAHEAD = 1500;  // keep this much track generated ahead (m)
 const CELL = 32;         // spatial hash cell size (m)
 const V3 = THREE.Vector3;
-const rightOf = (t) => new V3(-t.z, 0, t.x).normalize();
 
 class Edge {
   constructor(from, pts) {
@@ -82,6 +82,7 @@ export class TrackNetwork {
     }
     const e = new Edge(node, pts);
     e.wantsStation = !!opts.station;
+    e.spans = findSpans(e, opts);
     e.to = this.makeNode(pts[pts.length - 1].clone(), h, curv(L), pref,
       opts.branch ? 1 : node.sinceJunction + 1, opts.station ? 0 : node.sinceStation + 1);
     e.to.inEdge = e;
@@ -95,7 +96,10 @@ export class TrackNetwork {
 
   generateOuts(node) {
     if (node.outs.length) return;
-    const junction = node.sinceJunction >= 2 && (node.sinceJunction >= 3 || this.rand() < 0.5);
+    // no junctions or stations in (or just after) a tunnel or on a bridge
+    const ie = node.inEdge;
+    const clear = !ie || !ie.spans.some((s) => s.b > ie.length - 60);
+    const junction = clear && node.sinceJunction >= 2 && (node.sinceJunction >= 3 || this.rand() < 0.5);
     if (junction) {
       node.isJunction = true;
       this.makeEdge(node, { branch: 1 });
@@ -107,7 +111,7 @@ export class TrackNetwork {
       node.defaultSide = this.rand() < 0.5 ? 'left' : 'right';
       if (node.inEdge) this.buildSign(node);
     } else {
-      const station = node.sinceStation >= 4 || (node.sinceStation >= 2 && this.rand() < 0.5);
+      const station = clear && (node.sinceStation >= 4 || (node.sinceStation >= 2 && this.rand() < 0.5));
       this.makeEdge(node, { station });
     }
   }
@@ -160,7 +164,7 @@ export class TrackNetwork {
       const k = this.key(Math.floor(v.x / CELL), Math.floor(v.z / CELL));
       let arr = this.grid.get(k);
       if (!arr) { arr = []; this.grid.set(k, arr); }
-      arr.push({ e, x: v.x, y: v.y, z: v.z });
+      arr.push({ e, x: v.x, y: v.y, z: v.z, ...trackMode(e, d) });
       if (!e.cells.includes(k)) e.cells.push(k);
     }
   }
@@ -173,17 +177,17 @@ export class TrackNetwork {
   }
 
   nearest(x, z, maxR) {
-    let best = maxR * maxR, by = null;
+    let best = maxR * maxR, bp = null;
     const cx = Math.floor(x / CELL), cz = Math.floor(z / CELL), r = Math.ceil(maxR / CELL);
     for (let i = -r; i <= r; i++) for (let j = -r; j <= r; j++) {
       const arr = this.grid.get(this.key(cx + i, cz + j));
       if (!arr) continue;
       for (const p of arr) {
         const dx = p.x - x, dz = p.z - z, d2 = dx * dx + dz * dz;
-        if (d2 < best) { best = d2; by = p.y; }
+        if (d2 < best) { best = d2; bp = p; }
       }
     }
-    return by === null ? null : { d: Math.sqrt(best), y: by };
+    return bp && { d: Math.sqrt(best), y: bp.y, mode: bp.mode, endDist: bp.endDist };
   }
 
   // ---------- meshes ----------
@@ -215,6 +219,7 @@ export class TrackNetwork {
     }
     inst.receiveShadow = true;
     this.add(e, inst);
+    for (const sp of e.spans) (sp.type === 'tunnel' ? buildTunnel : buildBridge)((o) => this.add(e, o), e, sp);
   }
 
   add(e, obj) { this.scene.add(obj); e.objects.push(obj); }
@@ -247,29 +252,4 @@ export class TrackNetwork {
       s.board.scale.setScalar(active ? 1 + 0.1 * Math.sin(time * 6) : 1);
     }
   }
-}
-
-// Sweep a 2D profile (x = right, y = up) along track samples into a strip mesh.
-function sweep(samples, profile, uScale) {
-  const pos = [], uv = [], idx = [];
-  for (let s = 0; s < profile.length - 1; s++) {
-    const base = pos.length / 3;
-    for (const S of samples) {
-      for (const k of [s, s + 1]) {
-        const [px, py] = profile[k];
-        pos.push(S.p.x + S.r.x * px, S.p.y + py, S.p.z + S.r.z * px);
-        uv.push(S.d * uScale, k === s ? 0 : 1);
-      }
-    }
-    for (let i = 0; i < samples.length - 1; i++) {
-      const a = base + i * 2, b = a + 1, c = a + 2, d = a + 3;
-      idx.push(a, b, c, b, d, c);
-    }
-  }
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
-  g.setIndex(idx);
-  g.computeVertexNormals();
-  return g;
 }

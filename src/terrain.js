@@ -51,7 +51,20 @@ export class Terrain {
     const n = this.net.nearest(x, z, 70);
     if (n) {
       const bed = n.y - 0.55;
-      h = mix(bed, h, smooth(12, Math.min(70, 30 + Math.abs(h - bed) * 0.5), n.d));
+      if (n.mode === 'tunnel') {
+        // keep the mountain, and make sure there's always some roof over the tunnel
+        if (n.d < 16) h = Math.max(h, n.y + 9 - smooth(8, 16, n.d) * 40);
+      } else if (n.mode === 'portal') {
+        h = mix(bed, Math.max(h, n.y + 9), smooth(4.5, 8, n.d)); // narrow slot hidden behind the portal wall
+      } else if (n.mode === 'bridge') {
+        h = Math.min(h, n.y - 4 + smooth(6, 14, n.d) * 60); // leave the valley open under the deck
+      } else {
+        // cut or embankment; an embankment narrows towards a bridge abutment
+        const k = Math.min(1, n.endDist / 25), diff = Math.abs(h - bed);
+        const inner = mix(5, 12, k);
+        const outer = Math.max(inner + 1, mix(inner + diff * 1.2, Math.min(70, 30 + diff * 0.5), k));
+        h = mix(bed, h, smooth(inner, outer, n.d));
+      }
     }
     return this.roads.flatten(x, z, h);
   }
@@ -123,7 +136,7 @@ export class Terrain {
       c.lerp(snow, smooth(90, 110, h + perlin.noise(x / 30, z / 30, 5) * 12));
       c.lerp(sand, smooth(WATER_Y + 1.6, WATER_Y + 0.4, h));
       const tr = this.net.nearest(x, z, 6);
-      if (tr) c.lerp(gravel, smooth(6, 3, tr.d));
+      if (tr && tr.mode === 'normal') c.lerp(gravel, smooth(6, 3, tr.d));
       col.set([c.r, c.g, c.b], v * 3);
     }
     const idx = [];
