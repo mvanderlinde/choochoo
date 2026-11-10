@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { gravelTexture, arrowTexture } from './textures.js';
-import { trackBaseHeight, smooth, mix, mulberry32, mountainMask } from './heights.js';
+import { trackBaseHeight, smooth, mix, mulberry32, biomeWeights } from './heights.js';
+import { coastDistance } from './biomes.js';
 import { findSpans, trackMode, sweep, rightOf, buildTunnel, buildBridge } from './structures.js';
 
 // Endless track: a tree of edges generated on demand ahead of the train.
@@ -73,10 +74,32 @@ export class TrackNetwork {
     else curv = (s) => mix(k0, k1, smooth(0, L, s));
 
     const pts = [node.pos.clone()];
-    let x = node.pos.x, z = node.pos.z, h = node.heading;
+    let x = node.pos.x, z = node.pos.z, h = node.heading, endCurv = curv(L), steered = false;
     const n = Math.round(L / STEP);
+    // By the sea, one line follows the coast (a little way inland, so there's a beach); at junctions the
+    // other branch is free to wander off inland or out over the water.
+    const follow = opts.branch === -1 ? false : (node.follow ?? true);
+    const canSteer = !opts.station && !opts.depot;
     for (let i = 1; i <= n; i++) {
-      h += curv(i * STEP) * STEP;
+      let dh = curv(i * STEP) * STEP;
+      if (canSteer) {
+        const bw = biomeWeights(x, z);
+        if (bw.ocean && bw.oceanW > 0.15) {
+          const c = bw.ocean, sd = coastDistance(c, x, z);
+          const fx = Math.sin(h), fz = Math.cos(h);
+          let ax = -c.dz, az = c.dx;                         // along the coast...
+          if (ax * fx + az * fz < 0) { ax = -ax; az = -az; } // ...whichever way we're already heading
+          // the coast line keeps ~40 m inland of the water; the other branch heads off inland
+          const pull = follow ? THREE.MathUtils.clamp((-40 - sd) / 70, -0.9, 0.9) : (sd > -350 ? -0.8 : 0); // + = towards the sea
+          const want = Math.atan2(ax + c.dx * pull, az + c.dz * pull);
+          let diff = want - (h + dh);
+          diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+          dh += THREE.MathUtils.clamp(diff, -0.05, 0.05) * Math.min(1, bw.oceanW * 1.5);
+          steered = true;
+        }
+      }
+      h += dh;
+      if (i === n) endCurv = dh / STEP;
       x += Math.sin(h) * STEP;
       z += Math.cos(h) * STEP;
       pts.push(new V3(x, trackBaseHeight(x, z), z));
@@ -89,10 +112,14 @@ export class TrackNetwork {
     const e = new Edge(node, pts);
     e.wantsStation = !!opts.station;
     e.wantsDepot = !!opts.depot;
-    e.spans = findSpans(e, opts);
-    e.to = this.makeNode(pts[pts.length - 1].clone(), h, curv(L), pref,
+    const ie = node.inEdge; // what the previous edge ends in (tunnel, bridge or open track)
+    const prevEnd = ie?.spans.find((sp) => sp.b >= ie.length - 0.01)?.type ?? null;
+    e.spans = findSpans(e, { ...opts, prevEnd });
+    e.to = this.makeNode(pts[pts.length - 1].clone(), h, THREE.MathUtils.clamp(endCurv, -0.006, 0.006), steered ? h : pref,
       opts.branch ? 1 : node.sinceJunction + 1, opts.station ? 0 : node.sinceStation + 1);
     e.to.inEdge = e;
+    // a line that has left the sea behind may follow the next coast it finds
+    e.to.follow = follow || (biomeWeights(x, z).oceanW < 0.05);
     e.to.sinceDepot = opts.depot ? 0 : (node.sinceDepot ?? 3) + 1;
     node.outs.push(e);
     this.edges.add(e);
@@ -117,12 +144,15 @@ export class TrackNetwork {
       const [A, B] = node.outs;
       if (lat(A) < lat(B)) { node.left = A; node.right = B; } else { node.left = B; node.right = A; }
       node.defaultSide = this.rand() < 0.5 ? 'left' : 'right';
+      // by the sea, carry on along the coast unless the driver picks the other way
+      if (biomeWeights(node.pos.x, node.pos.z).oceanW > 0.3 && (node.follow ?? true)) node.defaultSide = node.left === node.outs[0] ? 'left' : 'right';
       if (node.inEdge) this.buildSign(node);
     } else {
       const station = clear && (node.sinceStation >= 4 || (node.sinceStation >= 2 && this.rand() < 0.5));
       // now and then a train depot (on flattish land, away from stations)
+      const w = biomeWeights(node.pos.x, node.pos.z).w;
       const depot = !station && clear && (node.sinceDepot ?? 3) >= 7 && node.sinceStation >= 1 &&
-        mountainMask(node.pos.x, node.pos.z) < 0.25 && this.rand() < 0.35;
+        (w.mountain ?? 0) < 0.25 && (w.ocean ?? 0) < 0.3 && (w.swamp ?? 0) < 0.5 && this.rand() < 0.35;
       this.makeEdge(node, { station, depot });
     }
   }
@@ -198,7 +228,7 @@ export class TrackNetwork {
         if (d2 < best) { best = d2; bp = p; }
       }
     }
-    return bp && { d: Math.sqrt(best), y: bp.y, mode: bp.mode, endDist: bp.endDist };
+    return bp && { d: Math.sqrt(best), y: bp.y, mode: bp.mode, endDist: bp.endDist, depth: bp.depth };
   }
 
   // ---------- meshes ----------

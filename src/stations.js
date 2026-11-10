@@ -1,13 +1,30 @@
 import * as THREE from 'three';
-import { mulberry32 } from './heights.js';
+import { mulberry32, biomeWeights } from './heights.js';
+import { buildNorthPole } from './northpole.js';
 import { textTexture, glowTexture } from './textures.js';
 import { nightGlow } from './daynight.js';
 
 const V3 = THREE.Vector3;
-const NAMES = ['Maple Hill', 'Bunny Hollow', 'Sunny Meadow', 'Pine Valley', 'Duck Pond', 'Apple Orchard',
-  'Teddy Town', 'Rainbow Bridge', 'Honey Creek', 'Puddle Lane', 'Acorn Grove', 'Blueberry Bay',
-  'Cupcake Corner', 'Pebble Beach', 'Daisy Field', 'Moose Mountain', 'Lollipop Lane',
-  'Bumblebee Junction', 'Starlight Station', 'Froggy Falls', 'Pancake Point', 'Owl Woods'];
+// Station names to suit each biome (each world starts somewhere different in each list).
+const NAMES = {
+  meadow: ['Maple Hill', 'Bunny Hollow', 'Sunny Meadow', 'Duck Pond', 'Apple Orchard', 'Teddy Town', 'Rainbow Bridge',
+    'Honey Creek', 'Puddle Lane', 'Cupcake Corner', 'Daisy Field', 'Lollipop Lane', 'Bumblebee Junction', 'Starlight Station',
+    'Pancake Point', 'Buttercup Green', 'Ladybird Lane'],
+  autumn: ['Pumpkin Patch', 'Acorn Grove', 'Maple Leaf', 'Harvest Hollow', 'Conker Corner', 'Crunchy Leaf Lane',
+    'Apple Cider Junction', 'Owl Woods', 'Hazelnut Hill', 'Scarecrow Station', 'Squirrel Wood', 'Toffee Apple Town'],
+  winter: ['Snowflake Junction', 'Frosty Fields', 'Icicle Hill', 'Mitten Town', 'Polar Bear Point', 'Sledge Hill',
+    'Penguin Pond', 'Snowball Station', 'Igloo Bay', 'Cocoa Corner', 'Woolly Hat Hollow'],
+  christmas: ['North Pole', 'Candy Cane Lane', 'Jingle Bell Junction', 'Reindeer Run', 'Tinsel Town', 'Gingerbread Village',
+    'Sleigh Bell Station', 'Mistletoe Hill', 'Holly Hollow', 'Elfton', 'Snow Angel Square', 'Santa\'s Village'],
+  swamp: ['Froggy Falls', 'Lily Pad Landing', 'Cattail Crossing', 'Bullfrog Bog', 'Muddy Puddle', 'Turtle Creek',
+    'Dragonfly Docks', 'Croaky Hollow', 'Gator Bend', 'Newt Nook', 'Squelchy Marsh'],
+  rainforest: ['Parrot Peak', 'Monkey Junction', 'Toucan Town', 'Banana Grove', 'Coconut Creek', 'Jaguar Junction',
+    'Sloth Hollow', 'Mango Falls', 'Vine Valley', 'Butterfly Bay', 'Tree Frog Town'],
+  mountain: ['Moose Mountain', 'Eagle Peak', 'Goat Ridge', 'Pine Valley', 'Echo Canyon', 'Marmot Meadow',
+    'Summit Station', 'Snowcap Summit', 'Cloudtop', 'Pebble Pass', 'Yodel Hill'],
+  ocean: ['Pebble Beach', 'Blueberry Bay', 'Seashell Shore', 'Starfish Point', 'Lighthouse Cove', 'Sandcastle Bay',
+    'Dolphin Docks', 'Crab Claw Cove', 'Seagull Harbour', 'Coral Bay', 'Bucket and Spade'],
+};
 export const EMOJI = ['🧑', '👩', '👨', '👧', '👦', '👵', '👴', '🧒', '👩‍🦰', '👨‍🦱', '🧔', '👱'];
 
 // ---------- little people ----------
@@ -91,9 +108,9 @@ const LIGHTS_PER_STATION = 2, LIGHT_POOL = 4; // real lights for the nearest sta
 
 class Station {
   // empty: nobody waiting and nothing to do here (the station the ride starts at)
-  constructor(scene, edge, name, seed, empty = false) {
+  constructor(scene, edge, name, seed, empty = false, biome = 'meadow') {
     const rand = this.rand = mulberry32(seed);
-    this.scene = scene; this.edge = edge; this.name = name;
+    this.scene = scene; this.edge = edge; this.name = name; this.biome = biome;
     const L = edge.length;
     this.trackPos = edge.pointAt(L / 2, new V3());
     this.t = edge.tangentAt(L / 2, new V3()); this.t.y = 0; this.t.normalize();
@@ -108,6 +125,7 @@ class Station {
     this.timers = [];
     this.people = [];
     this.group = this.buildPlatform(-side);
+    if (biome === 'christmas') { this.decor = buildNorthPole(this, rand); scene.add(this.decor); } // it's the North Pole!
     this.buildSpots();
 
     this.waiting = [];
@@ -263,13 +281,15 @@ class Station {
     for (const p of this.people) p.dispose();
     this.scene.remove(this.group);
     this.group.traverse((c) => c.geometry?.dispose());
+    if (this.decor) { this.scene.remove(this.decor); this.decor.traverse((c) => { if (c.geometry && !c.geometry.userData.shared) c.geometry.dispose(); }); }
   }
 }
 
 export class StationManager {
   constructor(scene, seed = 0) {
     this.scene = scene; this.list = new Set(); this.count = 0;
-    this.nameOffset = Math.floor(mulberry32(seed)() * NAMES.length); // each world starts at a different station
+    const r = mulberry32(seed);
+    this.nameNext = Object.fromEntries(Object.keys(NAMES).map((b) => [b, Math.floor(r() * NAMES[b].length)])); // each world starts somewhere different
     // a fixed pool of point lights (adding/removing lights would make three.js recompile shaders)
     this.lights = Array.from({ length: LIGHT_POOL }, () => {
       const l = new THREE.PointLight(0xffd59a, 0, 38, 1.2);
@@ -279,7 +299,12 @@ export class StationManager {
     this.lightsOn = 0;
   }
   create(edge) {
-    const st = new Station(this.scene, edge, NAMES[(this.count + this.nameOffset) % NAMES.length], 1000 + this.count * 7919, this.count === 0);
+    // which biome is the station in? (the one there's most of)
+    const mid = edge.pointAt(edge.length / 2, new V3()), w = biomeWeights(mid.x, mid.z).w;
+    let biome = 'meadow';
+    for (const b in w) if (w[b] > (w[biome] ?? 0)) biome = b;
+    const list = NAMES[biome], name = list[this.nameNext[biome]++ % list.length];
+    const st = new Station(this.scene, edge, name, 1000 + this.count * 7919, this.count === 0, biome);
     this.count++;
     edge.station = st;
     this.list.add(st);

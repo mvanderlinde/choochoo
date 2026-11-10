@@ -109,11 +109,11 @@ function roundRect(g, x, y, w, h, r) {
   g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath(); g.fill();
 }
 
-export function textTexture(text) {
+export function textTexture(text, ink = '#1d3e7a', paper = '#ffffff') {
   return canvasTex(1024, 205, (g, w, h) => {
-    g.fillStyle = '#1d3e7a'; roundRect(g, 0, 0, w, h, 30);
-    g.fillStyle = '#ffffff'; roundRect(g, 12, 12, w - 24, h - 24, 22);
-    g.fillStyle = '#1d3e7a';
+    g.fillStyle = ink; roundRect(g, 0, 0, w, h, 30);
+    g.fillStyle = paper; roundRect(g, 12, 12, w - 24, h - 24, 22);
+    g.fillStyle = ink;
     g.font = 'bold 100px system-ui, -apple-system, sans-serif';
     g.textAlign = 'center'; g.textBaseline = 'middle';
     g.fillText(text, w / 2, h / 2 + 6, w - 60);
@@ -149,6 +149,26 @@ export function glowTexture() {
     grd.addColorStop(1, 'rgba(255,255,255,0)');
     g.fillStyle = grd; g.fillRect(0, 0, 64, 64);
   });
+}
+
+// A white leaf shape (tinted per leaf by vertex colours).
+export function leafTexture() {
+  return canvasTex(64, 64, (g) => {
+    g.clearRect(0, 0, 64, 64);
+    g.translate(32, 32); g.rotate(-0.6);
+    g.fillStyle = '#ffffff';
+    g.beginPath(); g.moveTo(0, -26); g.quadraticCurveTo(22, 0, 0, 26); g.quadraticCurveTo(-22, 0, 0, -26); g.fill();
+    g.strokeStyle = 'rgba(0,0,0,0.25)'; g.lineWidth = 2; g.beginPath(); g.moveTo(0, -22); g.lineTo(0, 24); g.stroke();
+  });
+}
+
+// Coloured fairy-light bulbs on a dark wire, for Christmas houses (also used as the glow map).
+export function bulbsTexture() {
+  const cols = ['#ff3b30', '#ffd60a', '#34c759', '#0a84ff', '#ff9f0a', '#bf5af2'];
+  return canvasTex(256, 16, (g) => {
+    g.fillStyle = '#1a1a1a'; g.fillRect(0, 7, 256, 2);
+    for (let i = 0; i < 16; i++) { g.fillStyle = cols[i % cols.length]; g.beginPath(); g.arc(i * 16 + 8, 8, 5, 0, 7); g.fill(); }
+  }, true);
 }
 
 // Stone blocks for tunnel portals and bridge piers.

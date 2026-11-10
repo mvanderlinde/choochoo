@@ -6,7 +6,20 @@ The world is procedurally generated and endless, and every visit makes a new one
 
 Where the land rises high above the track, the train goes through a tunnel with stone portals, and the camera moves to the front of the engine so you can see the way through. Where the land drops away, it crosses a red girder bridge on stone piers.
 
-The weather changes as you go: sunny, cloudy, rain or snow falling. In cold regions the ground, trees and roofs are white and the lakes freeze, sometimes under a snowfall and sometimes under blue sky. An icon in the top-right corner shows the weather.
+The world is made of big biomes, roughly a minute of riding each, that blend into one another:
+
+- **Meadow:** green hills, lakes and woods.
+- **Autumn:** orange, red and yellow trees, birches and leaves tumbling down.
+- **Winter:** snow on the ground, snowy trees and frozen lakes.
+- **Christmas:** decorated Christmas trees, snowmen and lots of snowfall. Its towns are the North Pole: red, green and gingerbread houses with coloured lights, a striped North Pole signpost, a giant Christmas tree with presents, candy canes, Santa's Workshop, and reindeer (including one with a red nose) with Santa's sleigh.
+- **Swamp:** murky pools, willows, dead trees, reeds, lily pads and mist.
+- **Rainforest:** big jungly hills, palms, ferns and frequent rain.
+- **Mountains:** sharp snowy peaks, with the line climbing and dipping on steep grades and through tunnels.
+- **Ocean:** the line follows a long beach beside the open sea, with palms, sailboats and lighthouses.
+
+Station names suit the biome they're in: Pumpkin Patch in autumn, Jingle Bell Junction at Christmas, Froggy Falls in the swamp, Toucan Town in the rainforest, Eagle Peak in the mountains, Seashell Shore by the sea, and so on.
+
+The weather changes as you go: sunny, cloudy, rain or snow falling. Some biomes are wetter than others. An icon in the top-right corner shows the weather and the biome.
 
 Every so often the line runs past a train depot. It's a big yard full of sidings and parked passenger and freight trains, with engines peeking out of the engine shed. It also has a water tower, a coal stage, stacks of containers, and a turntable that slowly spins an engine round while a little shunting engine trundles up and down.
 
@@ -20,7 +33,7 @@ cd train-game
 python3 -m http.server 8765
 ```
 Then open http://localhost:8765 and click (or press any key) to start. Sound needs that first click.
-Add `?seed=123` to the URL to replay a particular world, and `?hour=19` to start at a particular time of day (the default is 9 in the morning).
+Add `?seed=123` to the URL to replay a particular world, `?hour=19` to start at a particular time of day (the default is 9 in the morning), and `?biome=ocean` to start in a particular biome (`meadow`, `autumn`, `winter`, `christmas`, `swamp`, `rainforest`, `mountain` or `ocean`).
 
 ## Controls
 | Key | Action |
@@ -34,15 +47,19 @@ Add `?seed=123` to the URL to replay a particular world, and `?hour=19` to start
 | F | Fullscreen |
 
 ## Code map
-- `src/heights.js`: the endless height field (hills, mountain regions, lakes) plus shared math
+- `src/noise.js`: shared noise and math helpers
+- `src/biomes.js`: the biome regions (jittered cells with blended borders) and the ocean coastlines
+- `src/heights.js`: the endless height field built from the biomes (hills, peaks, swamp pools, beaches, lakes), the line's height and the climate
+- `src/flora.js`: trees, plants and props for each biome, and which grow where
 - `src/tracks.js`: endless track generator (branching tree built about 1.5 km ahead, pruned behind) and junction signs
-- `src/terrain.js`: 200 m terrain tiles built around the train, each with trees, rocks and town buildings
+- `src/terrain.js`: 200 m terrain tiles built around the train, each with biome-coloured ground, plants, rocks, lighthouses and town buildings
 - `src/structures.js`: tunnels (portals and lining) and bridges (deck, piers and abutments), and where they go
 - `src/depot.js`: train depots (yard layout, parked trains, shed, turntable, shunter); static parts are merged into one mesh per material
 - `src/daynight.js`: the clock, sun and moon, stars, and `nightGlow()`, which fades registered lamps on at dusk and off at dawn
 - `src/weather.js`: rain and snow, plus the sky, fog, light, clouds and frozen lakes, following the climate regions in `heights.js`
 - `src/roads.js`: roads, level crossings (lights and arms), and the cars, trucks and buses, including squashing
-- `src/stations.js`: stations, platforms, towns and little people, plus the passenger boarding logic
+- `src/stations.js`: stations, platforms, towns, station names for each biome and little people, plus the passenger boarding logic
+- `src/northpole.js`: the North Pole decorations for stations in the Christmas biome
 - `src/train.js`: moves the cars along the track, handles junction choice, passengers, steam puffs
 - `src/models.js`: steam locomotive, tender and coaches built from Three.js shapes
 - `src/world.js`: sky, water and clouds that follow the camera

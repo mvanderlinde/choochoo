@@ -10,6 +10,7 @@ import { Weather } from './weather.js';
 import { DepotManager } from './depot.js';
 import { DayNight } from './daynight.js';
 import { setClimateSeed } from './heights.js';
+import { setStartBiome } from './biomes.js';
 import { spanAt } from './structures.js';
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -39,6 +40,7 @@ scene.add(sun, sun.target);
 // ---------- build the world ----------
 const seed = Number(new URLSearchParams(location.search).get("seed")) || Math.floor(Math.random() * 1e9); // new world every visit (or ?seed=123)
 setClimateSeed(seed);
+setStartBiome(new URLSearchParams(location.search).get('biome')); // e.g. ?biome=christmas
 const net = new TrackNetwork(scene, seed);
 const stations = new StationManager(scene, seed);
 const roads = new Roads(scene, net, stations, seed + 1);

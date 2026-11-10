@@ -1,20 +1,22 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { naturalHeight, mountainMask, smooth, mix, perlin, WATER_Y, mulberry32, groundSnow } from './heights.js';
-import { windowTexture, windowLitTexture } from './textures.js';
+import { naturalHeight, smooth, mix, perlin, WATER_Y, mulberry32, groundSnow, biomeWeights, snowiness } from './heights.js';
+import { windowTexture, windowLitTexture, bulbsTexture } from './textures.js';
+import { coloredGeo, floraGeos, KIND, FLORA, MAX_DENSITY } from './flora.js';
 import { nightGlow } from './daynight.js';
 
 // Infinite terrain in square chunks that are built around the train and dropped behind it.
 const C = 200, SEG = 40, R = 4;
 const V3 = THREE.Vector3;
 
-export function coloredGeo(geo, hex) {
-  if (geo.index) geo = geo.toNonIndexed();
-  const c = new THREE.Color(hex), n = geo.attributes.position.count, arr = new Float32Array(n * 3);
-  for (let i = 0; i < n; i++) arr.set([c.r, c.g, c.b], i * 3);
-  geo.setAttribute('color', new THREE.BufferAttribute(arr, 3));
-  return geo;
-}
+export { coloredGeo };
+
+// ground colours per biome (two shades, mixed with noise)
+const GROUND = {
+  meadow: [0x5aa64a, 0x86c95a], autumn: [0x8f9a3c, 0xc49a46], winter: [0x5aa64a, 0x86c95a], christmas: [0x5aa64a, 0x86c95a],
+  swamp: [0x4a5a2a, 0x6a6432], rainforest: [0x2c8a34, 0x4cae3a], mountain: [0x5a9446, 0x7fb256], ocean: [0x8fbf5e, 0xb8c873],
+};
+const GROUND_C = Object.fromEntries(Object.entries(GROUND).map(([b, [p, q]]) => [b, [new THREE.Color(p), new THREE.Color(q)]]));
 
 export class Terrain {
   constructor(scene, net, stations, roads) {
@@ -24,30 +26,20 @@ export class Terrain {
     this.groundMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95 });
     this.treeMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, flatShading: true });
     this.rockMat = new THREE.MeshStandardMaterial({ color: 0x8a837a, roughness: 1, flatShading: true });
-    this.pineGeo = mergeGeometries([
-      coloredGeo(new THREE.ConeGeometry(2.3, 7, 8).translate(0, 5.5, 0), 0x2f6b34),
-      coloredGeo(new THREE.CylinderGeometry(0.3, 0.45, 2.5, 6).translate(0, 1.25, 0), 0x6e4a2c),
-    ]);
-    this.roundGeo = mergeGeometries([
-      coloredGeo(new THREE.IcosahedronGeometry(3, 1).translate(0, 5.2, 0), 0x5d9e3c),
-      coloredGeo(new THREE.CylinderGeometry(0.35, 0.5, 3.6, 6).translate(0, 1.8, 0), 0x6e4a2c),
-    ]);
-    // winter versions: snow-capped pines and frosty round trees
-    this.snowPineGeo = mergeGeometries([
-      coloredGeo(new THREE.ConeGeometry(2.3, 7, 8).translate(0, 5.5, 0), 0x2f6b34),
-      coloredGeo(new THREE.ConeGeometry(1.75, 4.6, 8).translate(0, 7.0, 0), 0xf4f7fb),
-      coloredGeo(new THREE.CylinderGeometry(0.3, 0.45, 2.5, 6).translate(0, 1.25, 0), 0x6e4a2c),
-    ]);
-    this.snowRoundGeo = mergeGeometries([
-      coloredGeo(new THREE.IcosahedronGeometry(3, 1).translate(0, 5.2, 0), 0xdde8e2),
-      coloredGeo(new THREE.CylinderGeometry(0.35, 0.5, 3.6, 6).translate(0, 1.8, 0), 0x6e4a2c),
-    ]);
+    this.flora = floraGeos();
+    this.decoMat = new THREE.MeshBasicMaterial({ vertexColors: true }); // Christmas baubles: always bright
+    const bulbs = bulbsTexture();
+    this.lightsMat = nightGlow(new THREE.MeshStandardMaterial({ map: bulbs, emissive: 0xffffff, emissiveMap: bulbs, roughness: 0.5 }), 'emissiveIntensity', 2.2);
+    this.lampMat = nightGlow(new THREE.MeshStandardMaterial({ color: 0xfff3c0, emissive: 0xffe08a }), 'emissiveIntensity', 4);
     this.snowRoofMat = new THREE.MeshStandardMaterial({ color: 0xf4f7fb, roughness: 0.9 });
     this.rockGeo = new THREE.IcosahedronGeometry(1, 0);
     const wTex = windowTexture(), wLit = windowLitTexture();
     this.buildingMats = [0xf2d6a2, 0xf4a6a6, 0xa6c8f4, 0xc9f2a6, 0xf7f0e0, 0xe8c1f0, 0xffd27a]
       .map((c) => new THREE.MeshStandardMaterial({ color: c, map: wTex, roughness: 0.8, emissive: 0xffffff, emissiveMap: wLit }));
     for (const m of this.buildingMats) nightGlow(m, 'emissiveIntensity', 0.9); // cosy lit windows at night
+    // North Pole houses: red, green, white and gingerbread
+    this.northPoleMats = [0xc8322f, 0x2f7a4a, 0xf4f1ea, 0xb5713a, 0xe8a0b4]
+      .map((c) => nightGlow(new THREE.MeshStandardMaterial({ color: c, map: wTex, roughness: 0.8, emissive: 0xffffff, emissiveMap: wLit }), 'emissiveIntensity', 0.9));
     this.roofMats = [0xb5442f, 0x7a4b35, 0x5d6470, 0x3c6e8f].map((c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.8 }));
     this.roofGeo = new THREE.ConeGeometry(0.7071, 1, 4).rotateY(Math.PI / 4);
   }
@@ -69,14 +61,21 @@ export class Terrain {
         // keep the mountain, and make sure there's always some roof over the tunnel
         if (n.d < 16) h = Math.max(h, n.y + 9 - smooth(8, 16, n.d) * 40);
       } else if (n.mode === 'portal') {
-        h = mix(bed, Math.max(h, n.y + 9), smooth(4.5, 8, n.d)); // narrow slot hidden behind the portal wall
+        // slot hidden behind the (8.5 m wide) portal wall; inside the arch it sits under the tunnel floor
+        h = mix(n.d < 4.5 ? n.y - 0.9 : bed, Math.max(h, n.y + 9), smooth(6, 10, n.d));
+        // Steep mountains: keep the hill no higher than the top of the portal wall right around the
+        // entrance, or the (5 m) ground triangles stretch out in front of the portal and cover it.
+        if (n.d < 12) h = Math.min(h, n.y + 9);
+        // and only let it rise once we're 5 m (one ground triangle) behind the front of the wall
+        if (n.depth < 4.5 && n.d < 10) h = Math.min(h, bed);
       } else if (n.mode === 'bridge') {
         h = Math.min(h, n.y - 4 + smooth(6, 14, n.d) * 60); // leave the valley open under the deck
       } else {
         // cut or embankment; an embankment narrows towards a bridge abutment
         const k = Math.min(1, n.endDist / 25), diff = Math.abs(h - bed);
-        const inner = mix(5, 12, k);
-        const outer = Math.max(inner + 1, mix(inner + diff * 1.2, Math.min(70, 30 + diff * 0.5), k));
+        let inner = mix(5, 12, k);
+        let outer = Math.max(inner + 1, mix(inner + diff * 1.2, Math.min(70, 30 + diff * 0.5), k));
+        if (h < bed) { inner = mix(4.5, 7, k); outer = inner + Math.min(25, 2 + diff * 2.2); } // embankments: a bank, not a plain
         h = mix(bed, h, smooth(inner, outer, n.d));
       }
     }
@@ -135,22 +134,28 @@ export class Terrain {
     const V = (N + 1) * (N + 1);
     const pos = new Float32Array(V * 3), nor = new Float32Array(V * 3), col = new Float32Array(V * 3);
     const n = new V3(), c = new THREE.Color();
-    const grassA = new THREE.Color(0x5aa64a), grassB = new THREE.Color(0x86c95a), sand = new THREE.Color(0xd9c98f),
-      rock = new THREE.Color(0x857d74), snow = new THREE.Color(0xf4f7fb), town = new THREE.Color(0xb9b3a4), gravel = new THREE.Color(0x8f877c), yard = new THREE.Color(0x77706a);
+    const sand = new THREE.Color(0xd9c98f),
+      rock = new THREE.Color(0x857d74), snow = new THREE.Color(0xf4f7fb), town = new THREE.Color(0xb9b3a4), gravel = new THREE.Color(0x8f877c), yard = new THREE.Color(0x77706a),
+      leafy = new THREE.Color(0xc8742c), mud = new THREE.Color(0x4b4127);
     for (let j = 0; j <= N; j++) for (let i = 0; i <= N; i++) {
       const v = j * (N + 1) + i, x = x0 + i * cs, z = z0 + j * cs, h = H[(j + 1) * M + i + 1];
       n.set(H[(j + 1) * M + i] - H[(j + 1) * M + i + 2], 2 * cs, H[j * M + i + 1] - H[(j + 2) * M + i + 1]).normalize();
       pos.set([x, h, z], v * 3);
       nor.set([n.x, n.y, n.z], v * 3);
-      c.copy(grassA).lerp(grassB, smooth(-0.4, 0.4, perlin.noise(x / 40, z / 40, 2.2)));
+      const bw = biomeWeights(x, z), noise = smooth(-0.4, 0.4, perlin.noise(x / 40, z / 40, 2.2));
+      c.setRGB(0, 0, 0);
+      for (const b in bw.w) { const [p, q] = GROUND_C[b]; c.r += bw.w[b] * mix(p.r, q.r, noise); c.g += bw.w[b] * mix(p.g, q.g, noise); c.b += bw.w[b] * mix(p.b, q.b, noise); }
+      const autumn = bw.w.autumn ?? 0, swamp = bw.w.swamp ?? 0, ocean = bw.w.ocean ?? 0;
+      if (autumn) c.lerp(leafy, 0.4 * autumn * smooth(0.15, 0.5, perlin.noise(x / 13, z / 13, 7.7))); // fallen leaves
       for (const st of this.stations.list) {
         c.lerp(town, 0.85 * smooth(st.townR + 10, st.townR - 20, Math.hypot(x - st.trackPos.x, z - st.trackPos.z)));
       }
       if (this.depots?.list.size) c.lerp(yard, 0.9 * smooth(10, 0, this.depots.outside(x, z)));
       c.lerp(rock, smooth(0.86, 0.7, n.y));
       c.lerp(snow, smooth(90, 110, h + perlin.noise(x / 30, z / 30, 5) * 12));
-      c.lerp(sand, smooth(WATER_Y + 1.6, WATER_Y + 0.4, h));
-      c.lerp(snow, 0.93 * groundSnow(x, z) * smooth(0.55, 0.8, n.y)); // winter regions
+      c.lerp(sand, smooth(WATER_Y + 1.6 + ocean * 1.8, WATER_Y + 0.4, h) * (1 - swamp)); // beaches (wide by the sea)
+      if (swamp) c.lerp(mud, swamp * smooth(WATER_Y + 1.1, WATER_Y + 0.2, h));
+      c.lerp(snow, 0.93 * snowiness(bw) * smooth(0.55, 0.8, n.y)); // winter regions
       const tr = this.net.nearest(x, z, 6);
       if (tr && tr.mode === 'normal') c.lerp(gravel, smooth(6, 3, tr.d));
       col.set([c.r, c.g, c.b], v * 3);
@@ -183,24 +188,58 @@ export class Terrain {
     return !!this.depots?.near(x, z, pad);
   }
 
+  // Trees, plants and props: each spot picks a biome (by how much of each biome it is), then a plant.
   addTrees(group, x0, z0, rand) {
     const density = smooth(-0.35, 0.35, perlin.noise(x0 / 600 + 0.3, z0 / 600 + 0.3, 4.4));
-    const attempts = 15 + density * 110;
-    const pines = [], rounds = [], snowPines = [], snowRounds = [];
+    const attempts = (15 + density * 110) * MAX_DENSITY;
+    const lists = {};
     for (let i = 0; i < attempts; i++) {
       const x = x0 + rand() * C, z = z0 + rand() * C;
+      const bw = biomeWeights(x, z);
+      // pick a biome for this plant, strongly favouring the main one (cubed weights), so plants only mix near borders
+      let sum = 0;
+      for (const b in bw.w) sum += bw.w[b] ** 3;
+      let r = rand() * sum, biome = 'meadow';
+      for (const b in bw.w) { r -= bw.w[b] ** 3; if (r <= 0) { biome = b; break; } }
+      const F = FLORA[biome];
+      if (rand() > F.density / MAX_DENSITY) continue;
       if (this.inTown(x, z, 8) || this.net.nearest(x, z, 10) || this.roads.near(x, z, 10)) continue;
       const h = this.heightAt(x, z);
-      if (h < WATER_Y + 0.8 || h > 110) continue;
-      const t = { x, y: h - 0.2, z, s: 0.7 + rand() * 0.8, ry: rand() * 6.28, hue: rand() };
-      const pine = rand() < 0.3 + mountainMask(x, z) * 0.6, wintry = groundSnow(x, z) > 0.5;
-      (wintry ? (pine ? snowPines : snowRounds) : (pine ? pines : rounds)).push(t);
+      if (h > 110) continue;
+      const kind = F.pick(rand, h);
+      if (!kind) continue;
+      const K = KIND[kind];
+      if (K.far && this.net.nearest(x, z, 40)) continue; // boats stay clear of bridges
+      const [s0, s1] = K.s;
+      (lists[kind] ??= []).push({ x, y: K.water ? WATER_Y + 0.03 : h - 0.2, z, s: s0 + rand() * (s1 - s0), ry: rand() * 6.28, hue: rand() });
     }
     const col = new THREE.Color();
-    this.instanced(group, this.pineGeo, this.treeMat, pines, (t) => col.setHSL(0.28 + t.hue * 0.06, 0.25, 0.85 + t.hue * 0.15));
-    this.instanced(group, this.roundGeo, this.treeMat, rounds, (t) => col.setHSL(0.15 + t.hue * 0.15, 0.4, 0.8 + t.hue * 0.2));
-    this.instanced(group, this.snowPineGeo, this.treeMat, snowPines);
-    this.instanced(group, this.snowRoundGeo, this.treeMat, snowRounds);
+    const tint = { pine: (t) => col.setHSL(0.28 + t.hue * 0.06, 0.25, 0.85 + t.hue * 0.15), round: (t) => col.setHSL(0.15 + t.hue * 0.15, 0.4, 0.8 + t.hue * 0.2) };
+    const shade = (t) => col.setScalar(0.85 + t.hue * 0.15);
+    for (const kind in lists) {
+      this.instanced(group, this.flora[kind], this.treeMat, lists[kind], tint[kind] ?? shade);
+      if (kind === 'xmasTree') this.instanced(group, this.flora.xmasDeco, this.decoMat, lists[kind]);
+    }
+    this.addLighthouse(group, x0, z0, rand);
+  }
+
+  // Now and then a lighthouse on the shore.
+  addLighthouse(group, x0, z0, rand) {
+    if ((biomeWeights(x0 + C / 2, z0 + C / 2).w.ocean ?? 0) < 0.5 || rand() > 0.3) return;
+    for (let i = 0; i < 40; i++) {
+      const x = x0 + 20 + rand() * (C - 40), z = z0 + 20 + rand() * (C - 40), h = this.heightAt(x, z);
+      if (h < WATER_Y + 0.8 || h > WATER_Y + 3.5 || this.inTown(x, z, 20) || this.net.nearest(x, z, 30) || this.roads.near(x, z, 20)) continue;
+      const g = new THREE.Group();
+      g.position.set(x, h - 0.3, z);
+      const body = new THREE.Mesh(this.flora.lighthouse, this.treeMat);
+      body.castShadow = body.receiveShadow = true;
+      const lamp = new THREE.Mesh(this.lampGeo ??= new THREE.CylinderGeometry(1.15, 1.15, 1.7, 12), this.lampMat);
+      lamp.position.y = 16.8;
+      this.lampGeo.userData.shared = true;
+      g.add(body, lamp);
+      group.add(g);
+      return;
+    }
   }
 
   addRocks(group, x0, z0, rand) {
@@ -231,6 +270,7 @@ export class Terrain {
   }
 
   addBuildings(group, x0, z0) {
+    const lights = [];
     for (const st of this.stations.list) {
       for (const b of st.spots) {
         if (b.x < x0 || b.x >= x0 + C || b.z < z0 || b.z >= z0 + C) continue;
@@ -238,7 +278,8 @@ export class Terrain {
         const y = this.heightAt(b.x, b.z);
         const geo = new THREE.BoxGeometry(b.w, b.h + 1, b.d);
         boxUV(geo, b.w, b.h + 1, b.d);
-        const m = new THREE.Mesh(geo, this.buildingMats[b.mat]);
+        const mats = st.biome === 'christmas' ? this.northPoleMats : this.buildingMats;
+        const m = new THREE.Mesh(geo, mats[b.mat % mats.length]);
         m.position.set(b.x, y + (b.h - 1) / 2, b.z);
         m.rotation.y = b.yaw;
         m.castShadow = m.receiveShadow = true;
@@ -251,9 +292,28 @@ export class Terrain {
           roof.rotation.y = b.yaw;
           roof.castShadow = true;
           group.add(roof);
+          if ((biomeWeights(b.x, b.z).w.christmas ?? 0) > 0.4) lights.push(...this.eaveLights(b, y));
         }
       }
     }
+    if (lights.length) {
+      const m = new THREE.Mesh(mergeGeometries(lights), this.lightsMat);
+      m.userData.own = true;
+      group.add(m);
+    }
+  }
+
+  // Strings of coloured lights along a house's eaves (Christmas).
+  eaveLights(b, y) {
+    const out = [], hw = (b.w + 0.8) / 2, hd = (b.d + 0.8) / 2;
+    for (const [len, ox, oz, ry] of [[b.w + 0.8, 0, hd, 0], [b.w + 0.8, 0, -hd, 0], [b.d + 0.8, hw, 0, Math.PI / 2], [b.d + 0.8, -hw, 0, Math.PI / 2]]) {
+      const g = new THREE.BoxGeometry(len, 0.28, 0.08);
+      const uv = g.attributes.uv;
+      for (let i = 0; i < uv.count; i++) uv.setX(i, uv.getX(i) * len / 8); // 2 bulbs per metre
+      g.rotateY(ry).translate(ox, 0, oz).rotateY(b.yaw).translate(b.x, y + b.h - 0.1, b.z);
+      out.push(g);
+    }
+    return out;
   }
 }
 

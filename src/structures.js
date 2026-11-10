@@ -43,6 +43,10 @@ export function findSpans(e, opts) {
     const diff = naturalHeight(p.x, p.z) - p.y;
     let type = diff > TUNNEL_ABOVE ? 'tunnel' : diff < -BRIDGE_BELOW ? 'bridge' : null;
     if (opts.branch && d < 70) type = null; // keep junctions in the open
+    // A tunnel or bridge may only run right from the start of an edge if it carries on from the
+    // previous edge. Otherwise start it a little way in, so it gets its portal / abutment.
+    if (d < 12 && type && type !== opts.prevEnd) type = null;
+    if (d === 0 && opts.prevEnd) type = opts.prevEnd; // ...and one that does carry on gets its exit here at the latest
     pts.push({ d, type });
     if (d >= e.length) break;
   }
@@ -69,8 +73,9 @@ export function spanAt(e, d) { return e.spans?.find((s) => d >= s.a && d <= s.b)
 export function trackMode(e, d) {
   const sp = spanAt(e, d);
   if (sp?.type === 'tunnel') {
-    const inPortal = (sp.a > 0 && d - sp.a < 6) || (sp.b < e.length && sp.b - d < 6);
-    return { mode: inPortal ? 'portal' : 'tunnel', endDist: 0 };
+    // depth: how far inside the nearest portal this is
+    const depth = Math.min(sp.a > 0 ? d - sp.a : Infinity, sp.b < e.length ? sp.b - d : Infinity);
+    return { mode: depth < 6 ? 'portal' : 'tunnel', endDist: 0, depth };
   }
   if (sp) return { mode: 'bridge', endDist: 0 };
   let endDist = Infinity;
