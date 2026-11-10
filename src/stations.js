@@ -90,7 +90,8 @@ const lampHeadGeo = new THREE.SphereGeometry(0.32, 14, 10);
 const LIGHTS_PER_STATION = 2, LIGHT_POOL = 4; // real lights for the nearest stations only
 
 class Station {
-  constructor(scene, edge, name, seed) {
+  // empty: nobody waiting and nothing to do here (the station the ride starts at)
+  constructor(scene, edge, name, seed, empty = false) {
     const rand = this.rand = mulberry32(seed);
     this.scene = scene; this.edge = edge; this.name = name;
     const L = edge.length;
@@ -102,7 +103,7 @@ class Station {
     this.platformTop = this.trackPos.y + 0.9;
     this.townY = this.trackPos.y - 0.5;
     this.townR = 105;
-    this.served = false;
+    this.served = empty;
     this.busy = false;
     this.timers = [];
     this.people = [];
@@ -110,7 +111,7 @@ class Station {
     this.buildSpots();
 
     this.waiting = [];
-    const n = 3 + Math.floor(rand() * 4);
+    const n = empty ? 0 : 3 + Math.floor(rand() * 4);
     for (let i = 0; i < n; i++) {
       const p = this.platform.clone().addScaledVector(this.t, (rand() - 0.5) * 30).addScaledVector(this.s, rand() * 0.8 - 0.2);
       p.y = this.platformTop;
@@ -266,8 +267,9 @@ class Station {
 }
 
 export class StationManager {
-  constructor(scene) {
+  constructor(scene, seed = 0) {
     this.scene = scene; this.list = new Set(); this.count = 0;
+    this.nameOffset = Math.floor(mulberry32(seed)() * NAMES.length); // each world starts at a different station
     // a fixed pool of point lights (adding/removing lights would make three.js recompile shaders)
     this.lights = Array.from({ length: LIGHT_POOL }, () => {
       const l = new THREE.PointLight(0xffd59a, 0, 38, 1.2);
@@ -277,7 +279,7 @@ export class StationManager {
     this.lightsOn = 0;
   }
   create(edge) {
-    const st = new Station(this.scene, edge, NAMES[this.count % NAMES.length], 1000 + this.count * 7919);
+    const st = new Station(this.scene, edge, NAMES[(this.count + this.nameOffset) % NAMES.length], 1000 + this.count * 7919, this.count === 0);
     this.count++;
     edge.station = st;
     this.list.add(st);

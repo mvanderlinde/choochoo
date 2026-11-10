@@ -40,7 +40,7 @@ scene.add(sun, sun.target);
 const seed = Number(new URLSearchParams(location.search).get("seed")) || Math.floor(Math.random() * 1e9); // new world every visit (or ?seed=123)
 setClimateSeed(seed);
 const net = new TrackNetwork(scene, seed);
-const stations = new StationManager(scene);
+const stations = new StationManager(scene, seed);
 const roads = new Roads(scene, net, stations, seed + 1);
 const terrain = new Terrain(scene, net, stations, roads);
 const depots = new DepotManager(scene, net);
@@ -88,6 +88,9 @@ function start() {
   started = true;
   sound.init();
   startEl.classList.add('hidden');
+  // the first station has nobody waiting: straight to "All aboard!" and off we go
+  sound.say('All aboard!');
+  setTimeout(() => sound.horn(), 1100);
 }
 startEl.addEventListener('click', start);
 
