@@ -7,6 +7,7 @@ import { createWorld, SKY_HORIZON } from './world.js';
 import { Train } from './train.js';
 import { Sound } from './audio.js';
 import { Weather } from './weather.js';
+import { DepotManager } from './depot.js';
 import { DayNight } from './daynight.js';
 import { setClimateSeed } from './heights.js';
 import { spanAt } from './structures.js';
@@ -42,18 +43,26 @@ const net = new TrackNetwork(scene, seed);
 const stations = new StationManager(scene);
 const roads = new Roads(scene, net, stations, seed + 1);
 const terrain = new Terrain(scene, net, stations, roads);
-roads.terrain = terrain;
+const depots = new DepotManager(scene, net);
+roads.terrain = terrain; roads.depots = depots; terrain.depots = depots;
 net.onEdgeAdded = (e) => {
   if (e.wantsStation) {
     const st = stations.create(e);
     terrain.markDirtyArea(st.trackPos.x, st.trackPos.z, st.townR + 70);
   }
+  const gone = depots.checkEdge(e);
+  if (gone) terrain.markDirtyArea(gone.p.x, gone.p.z, 220);
+  if (e.wantsDepot) {
+    const dp = depots.create(e);
+    if (dp) terrain.markDirtyArea(dp.p.x, dp.p.z, 220);
+  }
   roads.checkEdge(e);
-  if (!e.wantsStation) roads.maybeCreate(e);
+  if (!e.wantsStation && !e.wantsDepot) roads.maybeCreate(e);
   terrain.markDirtyEdge(e);
 };
 net.onEdgeRemoved = (e) => {
   if (e.station) stations.remove(e.station);
+  if (e.depot) depots.remove(e.depot);
   roads.removeForEdge(e);
 };
 
@@ -67,7 +76,7 @@ const sound = new Sound();
 const weather = new Weather(scene, world, { sun, hemi, sound });
 const hourParam = new URLSearchParams(location.search).get('hour'); // e.g. ?hour=19 to start at dusk
 const dayNight = new DayNight(scene, hourParam !== null ? Number(hourParam) % 24 : 9);
-window.game = { train, net, stations, terrain, roads, weather, dayNight }; // handy for debugging in the console
+window.game = { train, net, stations, terrain, roads, weather, dayNight, depots }; // handy for debugging in the console
 
 // ---------- input ----------
 const held = new Set();
@@ -186,10 +195,21 @@ function updateStations(next, crossing) {
   else if (ahead && train.speed > 0.05) setHint(`🚉 ${ahead.name}! Press ⬇️ to stop`);
   else if (train.speed < 0.5) setHint('Press ⬆️ to go!');
   else if (time < skyHintUntil) setHint(skyHint);
+  else if (depotNear()) setHint('🏭 A train depot! Look at all the trains!');
   else {
     const sp = spanAt(train.edge, train.d - 5);
     setHint(sp?.type === 'tunnel' ? '🌑 Into the tunnel! Toot toot!' : sp?.type === 'bridge' ? '🌉 Over the bridge!' : '');
   }
+}
+
+// Is the train running past (or about to pass) a depot?
+function depotNear() {
+  for (const { edge, start } of train.routeAhead(200)) {
+    if (!edge.depot) continue;
+    const mid = start + edge.length / 2;
+    if (mid > -130 && mid < 200) return true;
+  }
+  return false;
 }
 
 // a little announcement when the lights come on in the evening and go off in the morning
@@ -308,6 +328,7 @@ renderer.setAnimationLoop(() => {
   if ((pruneTimer += dt) > 1) { pruneTimer = 0; net.prune(train, train.loco.group.position); }
   terrain.update(train.loco.group.position, 1);
   stations.update(dt, train, dayNight.lights);
+  depots.update(dt, train.loco.group.position);
   const crossings = crossingsAhead();
   updateCrossings(dt, crossings);
   updateStations(next, crossings.find((c) => c.dist > 0));

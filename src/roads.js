@@ -155,6 +155,7 @@ export class Roads {
       if (v >= 28) {
         if (this.net.nearest(x, z, BLEND + 2)) break;
         if ([...this.stations.list].some((st) => Math.hypot(x - st.trackPos.x, z - st.trackPos.z) < st.townR + 30)) break;
+        if (this.depots?.near(x, z, 30)) break;
         if (this.distance(x, z, 30) < 30) break;
       }
       const raw = this.terrain.heightAt(x, z);
@@ -176,6 +177,9 @@ export class Roads {
       if (e.station) {
         const st = e.station;
         hit = this.distTo(r, st.trackPos.x, st.trackPos.z) < st.townR + 30;
+      }
+      if (e.depot) {
+        for (let v = -r.L1; !hit && v <= r.L2; v += 4) if (e.depot.outside(r.p.x + r.dir.x * v, r.p.z + r.dir.z * v) < 30) hit = true;
       }
       for (let d = 0; !hit && d <= e.length; d += 4) {
         e.pointAt(d, v);

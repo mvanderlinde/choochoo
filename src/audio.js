@@ -12,6 +12,10 @@ export class Sound {
     const d = this.noise.getChannelData(0);
     for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
     this.lastHorn = -9; this.lastDing = -9;
+    try {
+      this.pickVoices();
+      speechSynthesis.addEventListener('voiceschanged', () => this.pickVoices()); // voices load late in some browsers
+    } catch { /* speech not available */ }
   }
 
   horn() {
@@ -178,12 +182,43 @@ export class Sound {
     this.rainGain.gain.setTargetAtTime(v * 0.1, this.ctx.currentTime, 0.3);
   }
 
+  // Speech: the natural-sounding Google voices when online, otherwise the best voice installed
+  // on this computer (Apple's downloadable Premium/Enhanced voices beat the old default ones).
+  pickVoices() {
+    const all = speechSynthesis.getVoices().filter((v) => v.lang.startsWith('en'));
+    const find = (test) => all.find(test);
+    const online = ['Google US English', 'Google UK English Female', 'Google UK English Male']
+      .map((n) => find((v) => v.name === n)).filter(Boolean);
+    const local = all.filter((v) => v.localService);
+    const rank = (v) => /premium/i.test(v.name) ? 0 : /enhanced/i.test(v.name) ? 1
+      : /^(Samantha|Ava|Zoe|Allison|Susan|Karen|Moira|Daniel|Tessa|Serena)\b/.test(v.name) ? 2 : 3;
+    local.sort((a, b) => rank(a) - rank(b) || (b.lang === 'en-US') - (a.lang === 'en-US'));
+    // skip the novelty voices (Bubbles, Zarvox, ...) unless they're all there is
+    this.voices = { online, local: local.filter((v) => rank(v) < 3).concat(local.filter((v) => rank(v) === 3 && /\(/.test(v.name))) };
+  }
+
   say(text) {
     try {
-      const u = new SpeechSynthesisUtterance(text);
-      u.rate = 0.95; u.pitch = 1.2;
+      if (!this.voices?.local.length && !this.voices?.online.length) this.pickVoices();
+      const id = this.sayId = (this.sayId ?? 0) + 1;
+      const speak = (voice, onFail) => {
+        const u = new SpeechSynthesisUtterance(text);
+        if (voice) { u.voice = voice; u.lang = voice.lang; }
+        u.rate = 0.95;
+        let started = false, failed = false;
+        const fail = () => {
+          if (started || failed || id !== this.sayId) return; // already talking, or a newer line took over
+          failed = true; speechSynthesis.cancel(); onFail?.();
+        };
+        u.onstart = () => { started = true; };
+        u.onerror = (e) => { if (e.error !== 'interrupted' && e.error !== 'canceled') fail(); };
+        if (onFail) setTimeout(fail, 2500); // online voice didn't start (no internet?): use a local one
+        speechSynthesis.speak(u);
+      };
       speechSynthesis.cancel();
-      speechSynthesis.speak(u);
+      const local = this.voices.local[0];
+      const online = navigator.onLine ? this.voices.online[0] : null;
+      if (online) speak(online, () => speak(local)); else speak(local);
     } catch { /* speech not available */ }
   }
 }

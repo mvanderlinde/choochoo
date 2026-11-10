@@ -61,6 +61,7 @@ export class Terrain {
       const d = Math.hypot(x - st.trackPos.x, z - st.trackPos.z);
       if (d < st.townR + 60) h = mix(st.townY, h, smooth(st.townR * 0.6, st.townR + 60, d));
     }
+    if (this.depots) h = this.depots.flatten(x, z, h);
     const n = this.net.nearest(x, z, 70);
     if (n) {
       const bed = n.y - 0.55;
@@ -135,7 +136,7 @@ export class Terrain {
     const pos = new Float32Array(V * 3), nor = new Float32Array(V * 3), col = new Float32Array(V * 3);
     const n = new V3(), c = new THREE.Color();
     const grassA = new THREE.Color(0x5aa64a), grassB = new THREE.Color(0x86c95a), sand = new THREE.Color(0xd9c98f),
-      rock = new THREE.Color(0x857d74), snow = new THREE.Color(0xf4f7fb), town = new THREE.Color(0xb9b3a4), gravel = new THREE.Color(0x8f877c);
+      rock = new THREE.Color(0x857d74), snow = new THREE.Color(0xf4f7fb), town = new THREE.Color(0xb9b3a4), gravel = new THREE.Color(0x8f877c), yard = new THREE.Color(0x77706a);
     for (let j = 0; j <= N; j++) for (let i = 0; i <= N; i++) {
       const v = j * (N + 1) + i, x = x0 + i * cs, z = z0 + j * cs, h = H[(j + 1) * M + i + 1];
       n.set(H[(j + 1) * M + i] - H[(j + 1) * M + i + 2], 2 * cs, H[j * M + i + 1] - H[(j + 2) * M + i + 1]).normalize();
@@ -145,6 +146,7 @@ export class Terrain {
       for (const st of this.stations.list) {
         c.lerp(town, 0.85 * smooth(st.townR + 10, st.townR - 20, Math.hypot(x - st.trackPos.x, z - st.trackPos.z)));
       }
+      if (this.depots?.list.size) c.lerp(yard, 0.9 * smooth(10, 0, this.depots.outside(x, z)));
       c.lerp(rock, smooth(0.86, 0.7, n.y));
       c.lerp(snow, smooth(90, 110, h + perlin.noise(x / 30, z / 30, 5) * 12));
       c.lerp(sand, smooth(WATER_Y + 1.6, WATER_Y + 0.4, h));
@@ -178,7 +180,7 @@ export class Terrain {
 
   inTown(x, z, pad) {
     for (const st of this.stations.list) if (Math.hypot(x - st.trackPos.x, z - st.trackPos.z) < st.townR + pad) return true;
-    return false;
+    return !!this.depots?.near(x, z, pad);
   }
 
   addTrees(group, x0, z0, rand) {
@@ -206,7 +208,7 @@ export class Terrain {
     for (let i = 0; i < 12; i++) {
       const x = x0 + rand() * C, z = z0 + rand() * C;
       const h = this.heightAt(x, z);
-      if (h < 45 || this.net.nearest(x, z, 10) || this.roads.near(x, z, 10)) continue;
+      if (h < 45 || this.net.nearest(x, z, 10) || this.roads.near(x, z, 10) || this.depots?.near(x, z, 10)) continue;
       rocks.push({ x, y: h - 0.5, z, s: 2 + rand() * 5, sx: 0.8 + rand() * 0.6, sy: 0.5 + rand() * 0.5, ry: rand() * 6.28 });
     }
     this.instanced(group, this.rockGeo, this.rockMat, rocks);

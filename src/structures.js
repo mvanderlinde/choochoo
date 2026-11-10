@@ -36,7 +36,7 @@ function mats() {
 
 // Which bits of an edge are tunnel or bridge: [{type, a, b}] in metres along the edge.
 export function findSpans(e, opts) {
-  if (opts.station) return [];
+  if (opts.station || opts.depot) return [];
   const p = new V3(), pts = [];
   for (let d = 0; ; d = Math.min(d + 2, e.length)) {
     e.pointAt(d, p);

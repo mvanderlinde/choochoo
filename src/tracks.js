@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { gravelTexture, arrowTexture } from './textures.js';
-import { trackBaseHeight, smooth, mix, mulberry32 } from './heights.js';
+import { trackBaseHeight, smooth, mix, mulberry32, mountainMask } from './heights.js';
 import { findSpans, trackMode, sweep, rightOf, buildTunnel, buildBridge } from './structures.js';
 
 // Endless track: a tree of edges generated on demand ahead of the train.
@@ -61,13 +61,14 @@ export class TrackNetwork {
 
   makeEdge(node, opts = {}) {
     const r = this.rand;
-    const L = opts.station ? 260 : 170 + r() * 90;
+    const L = opts.station ? 260 : opts.depot ? 320 : 170 + r() * 90;
     const k0 = opts.branch ? opts.branch * 0.0065 : node.curv;
     // each line has a preferred heading; branches push theirs apart so they fan out
     const pref = node.pref + (opts.branch ? opts.branch * 0.7 : (r() - 0.5) * 0.3);
     const k1 = THREE.MathUtils.clamp((r() * 2 - 1) * 0.0035 - 0.0035 * Math.sin(node.heading - pref), -0.005, 0.005);
     let curv;
     if (opts.branch) curv = (s) => (s < 120 ? mix(k0, 0, smooth(60, 120, s)) : mix(0, k1, smooth(120, L, s)));
+    else if (opts.depot) curv = (s) => k0 * (1 - smooth(0, L * 0.15, s)) + k1 * smooth(L * 0.85, L, s); // long straight for the yard
     else if (opts.station) curv = (s) => k0 * (1 - smooth(0, L * 0.3, s)) + k1 * smooth(L * 0.7, L, s); // straight middle
     else curv = (s) => mix(k0, k1, smooth(0, L, s));
 
@@ -80,12 +81,19 @@ export class TrackNetwork {
       z += Math.cos(h) * STEP;
       pts.push(new V3(x, trackBaseHeight(x, z), z));
     }
+    if (opts.depot) {
+      // the yard is flat, so level the middle of the line through it too
+      const yMid = pts[Math.round(n / 2)].y;
+      pts.forEach((p, i) => { p.y = mix(p.y, yMid, smooth(0, 6, i) * smooth(n, n - 6, i)); });
+    }
     const e = new Edge(node, pts);
     e.wantsStation = !!opts.station;
+    e.wantsDepot = !!opts.depot;
     e.spans = findSpans(e, opts);
     e.to = this.makeNode(pts[pts.length - 1].clone(), h, curv(L), pref,
       opts.branch ? 1 : node.sinceJunction + 1, opts.station ? 0 : node.sinceStation + 1);
     e.to.inEdge = e;
+    e.to.sinceDepot = opts.depot ? 0 : (node.sinceDepot ?? 3) + 1;
     node.outs.push(e);
     this.edges.add(e);
     this.buildEdgeMeshes(e);
@@ -112,7 +120,10 @@ export class TrackNetwork {
       if (node.inEdge) this.buildSign(node);
     } else {
       const station = clear && (node.sinceStation >= 4 || (node.sinceStation >= 2 && this.rand() < 0.5));
-      this.makeEdge(node, { station });
+      // now and then a train depot (on flattish land, away from stations)
+      const depot = !station && clear && (node.sinceDepot ?? 3) >= 7 && node.sinceStation >= 1 &&
+        mountainMask(node.pos.x, node.pos.z) < 0.25 && this.rand() < 0.35;
+      this.makeEdge(node, { station, depot });
     }
   }
 
