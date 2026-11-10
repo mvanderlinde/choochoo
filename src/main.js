@@ -191,39 +191,16 @@ function updateStations(next, crossing) {
     }
   }
 
+  // Only a few short hints, for grown-ups helping out: how to start, and the two things you can do.
+  if (train.speed > 0.5) everMoved = true;
   if (!started) setHint('');
-  else if (crossing && crossing.dist > 0 && crossing.dist < 260 && (!ahead || crossing.dist < next.dist) && train.speed > 0.05) {
-    setHint(crossing.road.active ? '🚦 Ding ding! The cars are waiting' : '🚗 Cars crossing! Press SPACE');
-  } else if (activeStop) setHint(`🚉 ${activeStop.name}! Everyone is getting on and off`);
-  else if (ahead && train.speed > 0.05) setHint(`🚉 ${ahead.name}! Press ⬇️ to stop`);
-  else if (train.speed < 0.5) setHint('Press ⬆️ to go!');
-  else if (time < skyHintUntil) setHint(skyHint);
-  else if (depotNear()) setHint('🏭 A train depot! Look at all the trains!');
-  else {
-    const sp = spanAt(train.edge, train.d - 5);
-    setHint(sp?.type === 'tunnel' ? '🌑 Into the tunnel! Toot toot!' : sp?.type === 'bridge' ? '🌉 Over the bridge!' : '');
-  }
+  else if (activeStop) setHint(`🚉 ${activeStop.name}`); // the station's name while people get on and off
+  else if (!everMoved) setHint('Press ⬆️ to go!');
+  else if (crossing && !crossing.road.active && crossing.dist > 0 && crossing.dist < 200 && (!ahead || crossing.dist < next.dist) && train.speed > 0.05) setHint('🚗 Press SPACE');
+  else if (ahead && next.dist < 250 && train.speed > 0.05) setHint('🚉 Press ⬇️');
+  else setHint('');
 }
-
-// Is the train running past (or about to pass) a depot?
-function depotNear() {
-  for (const { edge, start } of train.routeAhead(200)) {
-    if (!edge.depot) continue;
-    const mid = start + edge.length / 2;
-    if (mid > -130 && mid < 200) return true;
-  }
-  return false;
-}
-
-// a little announcement when the lights come on in the evening and go off in the morning
-let skyHint = '', skyHintUntil = 0, lightsWereOn = dayNight.lights > 0.5;
-function updateSkyHint() {
-  const on = dayNight.lightsTarget();
-  if (on === lightsWereOn) return;
-  lightsWereOn = on;
-  skyHint = on ? '🌙 Getting dark! Lights on!' : '🌅 Good morning! Lights off!';
-  skyHintUntil = time + 5;
-}
+let everMoved = false;
 
 // ---------- level crossings ----------
 // Crossings on our route ahead, with the distance from the train's head to each.
@@ -317,7 +294,7 @@ function updateCamera(dt, snap) {
 
 // ---------- loop ----------
 const clock = new THREE.Clock();
-let time = 0, chuffAcc = 0, pruneTimer = 0;
+let time = 0, chuffAcc = 0, chuffBeat = 0, pruneTimer = 0;
 updateCamera(0, true);
 
 renderer.setAnimationLoop(() => {
@@ -337,8 +314,9 @@ renderer.setAnimationLoop(() => {
   updateStations(next, crossings.find((c) => c.dist > 0));
 
   if (train.speed > 0.3) {
-    chuffAcc += dt * train.speed / (2 * Math.PI * 0.8 / 4); // 4 chuffs per driver wheel turn
-    if (chuffAcc >= 1) { chuffAcc %= 1; sound.chuff(0.12 + Math.min(1, train.speed / 20) * 0.25); }
+    // 4 chuffs per driver wheel turn, but no more than 8 a second so it never turns into a buzz
+    chuffAcc += dt * Math.min(train.speed / (2 * Math.PI * 0.8 / 4), 8);
+    if (chuffAcc >= 1) { chuffAcc %= 1; sound.chuff(Math.min(1, train.speed / 20), chuffBeat++); }
   }
 
   const jn = train.upcomingJunction();
@@ -351,7 +329,6 @@ renderer.setAnimationLoop(() => {
   updateCamera(dt);
   world.update(dt, camera);
   dayNight.update(dt, camera, weather.overcast ?? 0, tunnelBlend);
-  updateSkyHint();
   train.steamShade = 1 - 0.6 * dayNight.night;
   weather.update(dt, train.loco.group.position, camera, tunnelBlend, dayNight);
   const lp = train.loco.group.position;

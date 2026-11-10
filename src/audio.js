@@ -1,3 +1,5 @@
+const mix = (a, b, t) => a + (b - a) * t;
+
 // All sounds are synthesized with the Web Audio API; no audio files needed.
 export class Sound {
   init() {
@@ -54,17 +56,32 @@ export class Sound {
     n.start(t); n.stop(t + dur + 0.2);
   }
 
-  chuff(vol) {
+  // One steam exhaust beat. fast: 0 (just starting) .. 1 (top speed); beat: 0..3 within each wheel turn.
+  // A soft low "whump" of steam, a noise burst whose pitch sweeps down, and a little hiss on top.
+  // Slow chuffs are long and breathy; at speed they get shorter so they run together.
+  chuff(fast, beat) {
     if (!this.ctx) return;
     const ctx = this.ctx, t = ctx.currentTime;
-    const n = ctx.createBufferSource(); n.buffer = this.noise;
-    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 700; bp.Q.value = 0.8;
-    const g = ctx.createGain();
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(vol, t + 0.012);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.17);
-    n.connect(bp).connect(g).connect(this.master);
-    n.start(t, Math.random() * 0.7, 0.2);
+    const accent = [1, 0.62, 0.82, 0.58][beat % 4] * (0.9 + Math.random() * 0.2);
+    const vol = (0.045 + 0.04 * fast) * accent;
+    const len = mix(0.42, 0.13, fast);
+    const out = ctx.createGain();
+    out.gain.setValueAtTime(0.0001, t);
+    out.gain.exponentialRampToValueAtTime(vol, t + 0.015);
+    out.gain.exponentialRampToValueAtTime(vol * 0.35, t + len * 0.35);
+    out.gain.exponentialRampToValueAtTime(0.0001, t + len);
+    out.connect(this.master);
+    const burst = (filter, f0, f1, q, level) => {
+      const n = ctx.createBufferSource(); n.buffer = this.noise;
+      const f = ctx.createBiquadFilter(); f.type = filter; f.Q.value = q;
+      f.frequency.setValueAtTime(f0, t); f.frequency.exponentialRampToValueAtTime(f1, t + len);
+      const g = ctx.createGain(); g.gain.value = level;
+      n.connect(f).connect(g).connect(out);
+      n.start(t, Math.random() * 0.45, len + 0.05);
+    };
+    burst('lowpass', 1500 + 600 * fast, 380, 0.6, 1.0); // the chuff itself
+    burst('bandpass', 140, 90, 1.4, 3.0);              // body: the low "whump"
+    burst('highpass', 4200, 3000, 0.5, 0.18);          // a touch of steam hiss
   }
 
   ding() {
