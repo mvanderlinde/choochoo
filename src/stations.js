@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { mulberry32 } from './heights.js';
-import { textTexture } from './textures.js';
+import { textTexture, glowTexture } from './textures.js';
+import { nightGlow } from './daynight.js';
 
 const V3 = THREE.Vector3;
 const NAMES = ['Maple Hill', 'Bunny Hollow', 'Sunny Meadow', 'Pine Valley', 'Duck Pond', 'Apple Orchard',
@@ -80,6 +81,14 @@ class Person {
 }
 
 // ---------- stations ----------
+// platform lamps: shared materials that glow after dark
+const lampMat = nightGlow(new THREE.MeshStandardMaterial({ color: 0xfff6d0, emissive: 0xffd58a }), 'emissiveIntensity', 3);
+const lampHalo = nightGlow(new THREE.SpriteMaterial({ map: glowTexture(), color: 0xffd99a, transparent: true, depthWrite: false }), 'opacity', 0.85);
+const lampGeo = new THREE.BoxGeometry(0.7, 0.18, 1.4);
+const postGeo = new THREE.CylinderGeometry(0.1, 0.13, 4.6, 8).translate(0, 2.3, 0);
+const lampHeadGeo = new THREE.SphereGeometry(0.32, 14, 10);
+const LIGHTS_PER_STATION = 2, LIGHT_POOL = 4; // real lights for the nearest stations only
+
 class Station {
   constructor(scene, edge, name, seed) {
     const rand = this.rand = mulberry32(seed);
@@ -126,6 +135,18 @@ class Station {
     add(new THREE.BoxGeometry(4.4, 0.25, 26), 0xd23c3c, 0, 4.5, 0);
     add(new THREE.BoxGeometry(6, 4.5, 11), 0xf3e2c0, away * 5.5, 1.4, 0);
     add(new THREE.ConeGeometry(0.7071, 1, 4).rotateY(Math.PI / 4), 0xb5442f, away * 5.5, 5.0, 0).scale.set(7, 2.6, 12);
+    // lamps under the canopy and lamp posts at the platform ends
+    for (const z of [-9, -3, 3, 9]) {
+      const l = add(lampGeo, lampMat, away * 0.2, 4.28, z); l.castShadow = false;
+      const h = new THREE.Sprite(lampHalo); h.position.set(away * 0.2, 4.1, z); h.scale.setScalar(2.6); g.add(h);
+    }
+    for (const z of [-17, 17]) {
+      add(postGeo, 0x3a3f47, away * 1.1, 0.9, z);
+      const b = add(lampHeadGeo, lampMat, away * 1.1, 5.6, z); b.castShadow = false;
+      const h = new THREE.Sprite(lampHalo); h.position.set(away * 1.1, 5.6, z); h.scale.setScalar(3.2); g.add(h);
+    }
+    g.updateMatrixWorld();
+    this.lightSpots = [-10, 10].map((z) => g.localToWorld(new V3(0, 3.6, z)));
     // name boards, back to back so they read from either side
     const tex = textTexture(this.name);
     const signMat = new THREE.MeshBasicMaterial({ map: tex });
@@ -245,7 +266,16 @@ class Station {
 }
 
 export class StationManager {
-  constructor(scene) { this.scene = scene; this.list = new Set(); this.count = 0; }
+  constructor(scene) {
+    this.scene = scene; this.list = new Set(); this.count = 0;
+    // a fixed pool of point lights (adding/removing lights would make three.js recompile shaders)
+    this.lights = Array.from({ length: LIGHT_POOL }, () => {
+      const l = new THREE.PointLight(0xffd59a, 0, 38, 1.2);
+      scene.add(l);
+      return l;
+    });
+    this.lightsOn = 0;
+  }
   create(edge) {
     const st = new Station(this.scene, edge, NAMES[this.count % NAMES.length], 1000 + this.count * 7919);
     this.count++;
@@ -254,5 +284,16 @@ export class StationManager {
     return st;
   }
   remove(st) { st.dispose(); this.list.delete(st); }
-  update(dt, train) { for (const st of this.list) st.update(dt, train); }
+  update(dt, train, lights = 0) {
+    for (const st of this.list) st.update(dt, train);
+    // the nearest stations get the real lights
+    const lp = train.loco.group.position;
+    const near = [...this.list].sort((a, b) => a.trackPos.distanceToSquared(lp) - b.trackPos.distanceToSquared(lp));
+    this.lights.forEach((l, i) => {
+      const st = near[Math.floor(i / LIGHTS_PER_STATION)];
+      if (!st) { l.intensity = 0; return; }
+      l.position.copy(st.lightSpots[i % LIGHTS_PER_STATION]);
+      l.intensity = 30 * lights;
+    });
+  }
 }

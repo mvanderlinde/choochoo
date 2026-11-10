@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { naturalHeight, mountainMask, smooth, mix, perlin, WATER_Y, mulberry32, groundSnow } from './heights.js';
-import { windowTexture } from './textures.js';
+import { windowTexture, windowLitTexture } from './textures.js';
+import { nightGlow } from './daynight.js';
 
 // Infinite terrain in square chunks that are built around the train and dropped behind it.
 const C = 200, SEG = 40, R = 4;
@@ -43,9 +44,10 @@ export class Terrain {
     ]);
     this.snowRoofMat = new THREE.MeshStandardMaterial({ color: 0xf4f7fb, roughness: 0.9 });
     this.rockGeo = new THREE.IcosahedronGeometry(1, 0);
-    const wTex = windowTexture();
+    const wTex = windowTexture(), wLit = windowLitTexture();
     this.buildingMats = [0xf2d6a2, 0xf4a6a6, 0xa6c8f4, 0xc9f2a6, 0xf7f0e0, 0xe8c1f0, 0xffd27a]
-      .map((c) => new THREE.MeshStandardMaterial({ color: c, map: wTex, roughness: 0.8 }));
+      .map((c) => new THREE.MeshStandardMaterial({ color: c, map: wTex, roughness: 0.8, emissive: 0xffffff, emissiveMap: wLit }));
+    for (const m of this.buildingMats) nightGlow(m, 'emissiveIntensity', 0.9); // cosy lit windows at night
     this.roofMats = [0xb5442f, 0x7a4b35, 0x5d6470, 0x3c6e8f].map((c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.8 }));
     this.roofGeo = new THREE.ConeGeometry(0.7071, 1, 4).rotateY(Math.PI / 4);
   }

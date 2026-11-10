@@ -23,6 +23,7 @@ export class Train {
       scene.add(car.group);
     }
     this.loco = this.cars[0];
+    this.cars[this.cars.length - 1].tail.visible = true;
 
     this.puffs = [];
     const tex = puffTexture();
@@ -33,6 +34,7 @@ export class Train {
       this.puffs.push({ s, life: 0, max: 1, vel: new THREE.Vector3() });
     }
     this.puffTimer = 0;
+    this.steamShade = 1; // dimmed at night by main (the puffs aren't lit)
     this._a = new THREE.Vector3(); this._b = new THREE.Vector3();
     this.update(0, 0);
   }
@@ -124,6 +126,7 @@ export class Train {
       p.s.position.addScaledVector(p.vel, dt);
       p.s.scale.setScalar(1.2 + f * 6);
       p.s.material.opacity = 0.8 * (1 - f);
+      p.s.material.color.setScalar(this.steamShade);
     }
   }
 }

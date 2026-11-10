@@ -7,6 +7,7 @@ import { createWorld, SKY_HORIZON } from './world.js';
 import { Train } from './train.js';
 import { Sound } from './audio.js';
 import { Weather } from './weather.js';
+import { DayNight } from './daynight.js';
 import { setClimateSeed } from './heights.js';
 import { spanAt } from './structures.js';
 
@@ -33,7 +34,6 @@ Object.assign(sun.shadow.camera, { left: -80, right: 80, top: 80, bottom: -80, n
 sun.shadow.bias = -0.0005;
 sun.shadow.normalBias = 0.05;
 scene.add(sun, sun.target);
-const SUN_OFFSET = new THREE.Vector3(120, 200, 80);
 
 // ---------- build the world ----------
 const seed = Number(new URLSearchParams(location.search).get("seed")) || Math.floor(Math.random() * 1e9); // new world every visit (or ?seed=123)
@@ -65,7 +65,9 @@ const world = createWorld(scene);
 terrain.update(train.loco.group.position, Infinity);
 const sound = new Sound();
 const weather = new Weather(scene, world, { sun, hemi, sound });
-window.game = { train, net, stations, terrain, roads, weather }; // handy for debugging in the console
+const hourParam = new URLSearchParams(location.search).get('hour'); // e.g. ?hour=19 to start at dusk
+const dayNight = new DayNight(scene, hourParam !== null ? Number(hourParam) % 24 : 9);
+window.game = { train, net, stations, terrain, roads, weather, dayNight }; // handy for debugging in the console
 
 // ---------- input ----------
 const held = new Set();
@@ -183,10 +185,21 @@ function updateStations(next, crossing) {
   } else if (activeStop) setHint(`🚉 ${activeStop.name}! Everyone is getting on and off`);
   else if (ahead && train.speed > 0.05) setHint(`🚉 ${ahead.name}! Press ⬇️ to stop`);
   else if (train.speed < 0.5) setHint('Press ⬆️ to go!');
+  else if (time < skyHintUntil) setHint(skyHint);
   else {
     const sp = spanAt(train.edge, train.d - 5);
     setHint(sp?.type === 'tunnel' ? '🌑 Into the tunnel! Toot toot!' : sp?.type === 'bridge' ? '🌉 Over the bridge!' : '');
   }
+}
+
+// a little announcement when the lights come on in the evening and go off in the morning
+let skyHint = '', skyHintUntil = 0, lightsWereOn = dayNight.lights > 0.5;
+function updateSkyHint() {
+  const on = dayNight.lightsTarget();
+  if (on === lightsWereOn) return;
+  lightsWereOn = on;
+  skyHint = on ? '🌙 Getting dark! Lights on!' : '🌅 Good morning! Lights off!';
+  skyHintUntil = time + 5;
 }
 
 // ---------- level crossings ----------
@@ -294,7 +307,7 @@ renderer.setAnimationLoop(() => {
   net.expand(train.edge, train.d);
   if ((pruneTimer += dt) > 1) { pruneTimer = 0; net.prune(train, train.loco.group.position); }
   terrain.update(train.loco.group.position, 1);
-  stations.update(dt, train);
+  stations.update(dt, train, dayNight.lights);
   const crossings = crossingsAhead();
   updateCrossings(dt, crossings);
   updateStations(next, crossings.find((c) => c.dist > 0));
@@ -313,9 +326,13 @@ renderer.setAnimationLoop(() => {
 
   updateCamera(dt);
   world.update(dt, camera);
-  weather.update(dt, train.loco.group.position, camera, tunnelBlend);
+  dayNight.update(dt, camera, weather.overcast ?? 0, tunnelBlend);
+  updateSkyHint();
+  train.steamShade = 1 - 0.6 * dayNight.night;
+  weather.update(dt, train.loco.group.position, camera, tunnelBlend, dayNight);
   const lp = train.loco.group.position;
-  sun.position.copy(lp).add(SUN_OFFSET);
+  sun.position.copy(lp).addScaledVector(dayNight.sunDir, dayNight.sunHeight >= 0 ? 250 : -250); // sun or moon
   sun.target.position.copy(lp);
+  window.game.debugCamera?.(camera); // console hook for looking around while testing
   renderer.render(scene, camera);
 });

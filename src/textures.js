@@ -83,6 +83,26 @@ export function coachSideTexture(hex) {
   });
 }
 
+// Same layout as coachSideTexture, but black except for the windows: used as a glow map at night.
+export function coachLitTexture() {
+  return canvasTex(1024, 256, (g, w) => {
+    g.fillStyle = '#000000'; g.fillRect(0, 0, w, 256);
+    g.fillStyle = '#ffd98a';
+    g.fillRect(30, 46, 38, 50); g.fillRect(w - 68, 46, 38, 50);
+    const n = 7, x0 = 110, x1 = w - 110, ww = (x1 - x0) / n;
+    for (let i = 0; i < n; i++) roundRect(g, x0 + i * ww + 10, 40, ww - 20, 90, 14);
+  });
+}
+
+// Lit windows for town buildings at night (matches windowTexture).
+export function windowLitTexture() {
+  return canvasTex(128, 128, (g) => {
+    g.fillStyle = '#000000'; g.fillRect(0, 0, 128, 128);
+    g.fillStyle = '#ffcf7a'; g.fillRect(33, 31, 62, 62);
+    g.fillStyle = '#000000'; g.fillRect(62, 31, 4, 62); g.fillRect(33, 60, 62, 4);
+  }, true);
+}
+
 function roundRect(g, x, y, w, h, r) {
   g.beginPath();
   g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r);

@@ -3,6 +3,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { mountainMask, smooth, mix, WATER_Y, mulberry32 } from './heights.js';
 import { coloredGeo } from './terrain.js';
 import { roadTexture, stripeTexture, glowTexture } from './textures.js';
+import { nightGlow } from './daynight.js';
 
 // Roads that cross the track at level crossings, with cars, trucks and buses driving on them.
 // The crossing lights and arms only come down when the driver presses SPACE; otherwise the
@@ -26,9 +27,9 @@ const TRUCK_COLORS = [0xd62828, 0x1d70b8, 0x2a9d8f, 0xf4a261];
 const CARGO_COLORS = [0xffffff, 0xf1f1f1, 0xffd166, 0x90be6d];
 const BUS_COLORS = [0xf5b700, 0xf5b700, 0xd62828, 0x1d70b8];
 const TYPES = {
-  car: { len: 4.4, speed: [10, 14] },
-  truck: { len: 7.8, speed: [8, 11] },
-  bus: { len: 10.6, speed: [8, 10] },
+  car: { len: 4.4, speed: [10, 14], head: [0.62, 0.85, 2.25], tail: [0.62, 0.85, -2.25] },
+  truck: { len: 7.8, speed: [8, 11], head: [0.7, 1.25, 3.85], tail: [1.0, 1.0, -3.85] },
+  bus: { len: 10.6, speed: [8, 10], head: [0.85, 1.0, 5.35], tail: [0.85, 1.0, -5.35] },
 };
 
 function vehicleGeo(type, color, color2) {
@@ -97,6 +98,15 @@ export class Roads {
     };
     this.glowTex = glowTexture();
     this._v = new V3();
+
+    // vehicle lights for after dark (shared materials, faded on at dusk by the day/night clock)
+    const glowMat = (color, o) => nightGlow(new THREE.SpriteMaterial({ map: this.glowTex, color, transparent: true, depthWrite: false }), 'opacity', o);
+    this.lightMats = {
+      head: glowMat(0xfff4c8, 0.95),
+      tail: glowMat(0xff2414, 0.85),
+      pool: nightGlow(new THREE.MeshBasicMaterial({ map: this.glowTex, color: 0xfff0c0, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }), 'opacity', 0.75),
+    };
+    this.poolGeo = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
   }
 
   // ---------- creating / removing roads ----------
@@ -341,11 +351,28 @@ export class Roads {
     const T = TYPES[type];
     const mesh = new THREE.Mesh(this.vehicleGeoFor(type), this.vehMat);
     mesh.castShadow = true;
+    this.addLights(mesh, T);
     this.scene.add(mesh);
     const max = T.speed[0] + this.rand() * (T.speed[1] - T.speed[0]);
     const veh = { type, mesh, lane, q, len: T.len, max, speed: max * 0.8, state: 'drive', t: 0, squash: 0 };
     r.vehicles.push(veh);
     return veh;
+  }
+
+  // headlights and tail lights (children, so they follow the vehicle and get squashed with it)
+  addLights(mesh, T) {
+    const L = this.lightMats;
+    for (const sx of [-1, 1]) {
+      const h = new THREE.Sprite(L.head);
+      h.position.set(sx * T.head[0], T.head[1], T.head[2]); h.scale.setScalar(1.8);
+      const t = new THREE.Sprite(L.tail);
+      t.position.set(sx * T.tail[0], T.tail[1], T.tail[2]); t.scale.setScalar(0.9);
+      mesh.add(h, t);
+    }
+    const pool = new THREE.Mesh(this.poolGeo, L.pool); // light on the road in front
+    pool.position.set(0, 0.15, T.head[2] + 3.8); pool.scale.set(4.2, 1, 7.5);
+    pool.renderOrder = 1;
+    mesh.add(pool);
   }
 
   // Lane s: travelling in +s*dir. Progress q runs from qStart to qEnd, crossing at q = 0.

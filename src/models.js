@@ -1,12 +1,22 @@
 import * as THREE from 'three';
-import { coachSideTexture } from './textures.js';
+import { coachSideTexture, coachLitTexture, glowTexture } from './textures.js';
+import { nightGlow } from './daynight.js';
 
 // Procedural rolling stock. Local axes: +z = forward, y = 0 at rail top.
 const M = (color, o = {}) => new THREE.MeshStandardMaterial({ color, roughness: 0.55, metalness: 0.1, ...o });
 const black = M(0x26262b, { roughness: 0.7 });
 const gold = M(0xf2c12e, { metalness: 0.6, roughness: 0.3 });
 const steel = M(0x8d939c, { metalness: 0.7, roughness: 0.4 });
-const lamp = new THREE.MeshStandardMaterial({ color: 0xfff6c0, emissive: 0xffe680, emissiveIntensity: 1.5 });
+const lamp = new THREE.MeshStandardMaterial({ color: 0xfff6c0, emissive: 0xffe680 });
+nightGlow(lamp, 'emissiveIntensity', 4, true);
+const glowTex = glowTexture();
+const litWindows = coachLitTexture();
+const headGlow = nightGlow(new THREE.SpriteMaterial({ map: glowTex, color: 0xfff0b0, transparent: true, depthWrite: false }), 'opacity', 0.95, true);
+const tailGlow = nightGlow(new THREE.SpriteMaterial({ map: glowTex, color: 0xff2a1a, transparent: true, depthWrite: false }), 'opacity', 0.9, true);
+// a soft cone of light in front of the engine, so you can see the beam
+const beamMat = nightGlow(new THREE.MeshBasicMaterial({ color: 0xfff1b8, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide }), 'opacity', 0.07, true);
+const beamGeo = new THREE.ConeGeometry(5, 34, 24, 1, true).translate(0, -17, 0).rotateX(-Math.PI / 2 + 0.07);
+const cabGlow = nightGlow(new THREE.MeshStandardMaterial({ color: 0x26262b, emissive: 0xffb050 }), 'emissiveIntensity', 0.9);
 
 function add(parent, geo, mat, x, y, z) {
   const m = new THREE.Mesh(geo, mat);
@@ -46,13 +56,24 @@ export function makeLoco(color = 0xd8342c) {
   add(g, new THREE.CylinderGeometry(0.1, 0.12, 0.6, 8), gold, 0, 4.1, -1.0);       // whistle
   add(g, box(2.9, 2.5, 2.8), body, 0, 3.0, -2.9);           // cab
   add(g, box(3.3, 0.22, 3.3), black, 0, 4.35, -2.9);        // cab roof
-  add(g, box(2.95, 0.9, 1.1), black, 0, 3.5, -2.6);         // cab side windows
+  add(g, box(2.95, 0.9, 1.1), cabGlow, 0, 3.5, -2.6);       // cab side windows (warm firelight at night)
   for (const x of [-0.95, 0.95]) add(g, cylZ(0.26, 0.26, 0.05, 16), M(0x9fd3ff), x, 3.8, -1.48);
   add(g, box(3.0, 0.5, 0.25), red, 0, 1.55, 5.65);          // buffer beam
   for (const x of [-1.0, 1.0]) add(g, cylZ(0.16, 0.16, 0.4, 12), black, x, 1.55, 5.95);
   add(g, box(2.4, 0.9, 0.9), red, 0, 0.6, 5.6).rotation.x = -0.6; // cowcatcher
   add(g, cylZ(0.3, 0.3, 0.35, 16), black, 0, 3.5, 5.3);     // headlamp
   add(g, cylZ(0.22, 0.22, 0.05, 16), lamp, 0, 3.5, 5.48);
+  // headlamp: a real spotlight on the track ahead, a glow and a visible beam (all fade on at dusk)
+  const spot = nightGlow(new THREE.SpotLight(0xfff0c8, 0, 120, 0.42, 0.55, 1), 'intensity', 60, true);
+  spot.position.set(0, 3.5, 5.6);
+  spot.target.position.set(0, 0.5, 40);
+  g.add(spot, spot.target);
+  const glow = new THREE.Sprite(headGlow);
+  glow.position.set(0, 3.5, 5.75); glow.scale.setScalar(3);
+  const beam = new THREE.Mesh(beamGeo, beamMat);
+  beam.position.set(0, 3.5, 5.6);
+  beam.renderOrder = 2;
+  g.add(glow, beam);
   return { group: g, length: 11, wheels, chimneyTop: new THREE.Vector3(0, 5.2, 4.55) };
 }
 
@@ -77,10 +98,16 @@ export function makeCoach(color) {
     for (const x of [-0.8, 0.8]) for (const dz of [-0.8, 0.8]) wheel(g, wheels, 0.45, x, bz + dz, steel);
   }
   add(g, box(2.6, 0.35, 12), black, 0, 1.15, 0);
-  const side = new THREE.MeshStandardMaterial({ map: coachSideTexture(color), roughness: 0.5 });
+  const side = new THREE.MeshStandardMaterial({ map: coachSideTexture(color), roughness: 0.5, emissive: 0xffffff, emissiveMap: litWindows });
+  nightGlow(side, 'emissiveIntensity', 1.1);
   const plain = M(color);
   add(g, box(2.9, 2.5, 12), [side, side, plain, plain, plain, plain], 0, 2.55, 0);
   add(g, cylZ(1.5, 1.5, 12.2, 24), M(0xeeeeee), 0, 3.8, 0).scale.y = 0.28; // rounded roof
   for (const z of [-6.15, 6.15]) for (const x of [-1.0, 1.0]) add(g, cylZ(0.15, 0.15, 0.4, 10), black, x, 1.4, z);
-  return { group: g, length: 12.5, wheels, doors: [-5.4, 5.4] };
+  // red tail lamp (only shown on the last coach)
+  const tail = new THREE.Sprite(tailGlow);
+  tail.position.set(0, 1.9, -6.3); tail.scale.setScalar(1.6);
+  tail.visible = false;
+  g.add(tail);
+  return { group: g, length: 12.5, wheels, doors: [-5.4, 5.4], tail };
 }
