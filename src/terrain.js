@@ -3,6 +3,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { naturalHeight, smooth, mix, perlin, WATER_Y, mulberry32, groundSnow, biomeWeights, snowiness } from './heights.js';
 import { windowTexture, windowLitTexture, bulbsTexture } from './textures.js';
 import { coloredGeo, floraGeos, KIND, FLORA, MAX_DENSITY } from './flora.js';
+import { liftDistance } from './skitown.js';
 import { nightGlow } from './daynight.js';
 
 // Infinite terrain in square chunks that are built around the train and dropped behind it.
@@ -40,6 +41,14 @@ export class Terrain {
     // North Pole houses: red, green, white and gingerbread
     this.northPoleMats = [0xc8322f, 0x2f7a4a, 0xf4f1ea, 0xb5713a, 0xe8a0b4]
       .map((c) => nightGlow(new THREE.MeshStandardMaterial({ color: c, map: wTex, roughness: 0.8, emissive: 0xffffff, emissiveMap: wLit }), 'emissiveIntensity', 0.9));
+    // ski chalets: honey-coloured wood, stone base, dark balconies, snowy gable roofs
+    this.chaletMats = [0xa8703f, 0x8b5a2b, 0xb8834e, 0x9a6233]
+      .map((c) => nightGlow(new THREE.MeshStandardMaterial({ color: c, map: wTex, roughness: 0.85, emissive: 0xffffff, emissiveMap: wLit }), 'emissiveIntensity', 0.9));
+    this.chaletStone = new THREE.MeshStandardMaterial({ color: 0x8f8a82, roughness: 1 });
+    this.chaletDark = new THREE.MeshStandardMaterial({ color: 0x5a3a20, roughness: 0.9 });
+    const tri = new THREE.Shape(); tri.moveTo(-0.5, 0); tri.lineTo(0.5, 0); tri.lineTo(0, 1); tri.lineTo(-0.5, 0);
+    this.gableGeo = new THREE.ExtrudeGeometry(tri, { depth: 1, bevelEnabled: false }).translate(0, 0, -0.5).rotateY(Math.PI / 2);
+    this.gableGeo.userData.shared = true;
     this.roofMats = [0xb5442f, 0x7a4b35, 0x5d6470, 0x3c6e8f].map((c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.8 }));
     this.roofGeo = new THREE.ConeGeometry(0.7071, 1, 4).rotateY(Math.PI / 4);
   }
@@ -148,11 +157,15 @@ export class Terrain {
       const autumn = bw.w.autumn ?? 0, swamp = bw.w.swamp ?? 0, ocean = bw.w.ocean ?? 0;
       if (autumn) c.lerp(leafy, 0.4 * autumn * smooth(0.15, 0.5, perlin.noise(x / 13, z / 13, 7.7))); // fallen leaves
       for (const st of this.stations.list) {
-        c.lerp(town, 0.85 * smooth(st.townR + 10, st.townR - 20, Math.hypot(x - st.trackPos.x, z - st.trackPos.z)));
+        const inTown = smooth(st.townR + 10, st.townR - 20, Math.hypot(x - st.trackPos.x, z - st.trackPos.z));
+        if (st.biome === 'mountain') { // ski village: snowy streets, and a snowy ski run up the mountain
+          c.lerp(snow, 0.95 * Math.max(inTown, st.lift ? smooth(26, 14, liftDistance(st.lift, x, z)) : 0));
+        } else c.lerp(town, 0.85 * inTown);
       }
       if (this.depots?.list.size) c.lerp(yard, 0.9 * smooth(10, 0, this.depots.outside(x, z)));
       c.lerp(rock, smooth(0.86, 0.7, n.y));
-      c.lerp(snow, smooth(90, 110, h + perlin.noise(x / 30, z / 30, 5) * 12));
+      const snowLine = mix(95, 68, bw.w.mountain ?? 0); // the mountains have snow on their upper slopes
+      c.lerp(snow, smooth(snowLine, snowLine + 18, h + perlin.noise(x / 30, z / 30, 5) * 12));
       c.lerp(sand, smooth(WATER_Y + 1.6 + ocean * 1.8, WATER_Y + 0.4, h) * (1 - swamp)); // beaches (wide by the sea)
       if (swamp) c.lerp(mud, swamp * smooth(WATER_Y + 1.1, WATER_Y + 0.2, h));
       c.lerp(snow, 0.93 * snowiness(bw) * smooth(0.55, 0.8, n.y)); // winter regions
@@ -184,7 +197,10 @@ export class Terrain {
   }
 
   inTown(x, z, pad) {
-    for (const st of this.stations.list) if (Math.hypot(x - st.trackPos.x, z - st.trackPos.z) < st.townR + pad) return true;
+    for (const st of this.stations.list) {
+      if (Math.hypot(x - st.trackPos.x, z - st.trackPos.z) < st.townR + pad) return true;
+      if (st.lift && liftDistance(st.lift, x, z) < 14 + pad) return true; // keep the lift line and ski run clear
+    }
     return !!this.depots?.near(x, z, pad);
   }
 
@@ -247,7 +263,7 @@ export class Terrain {
     for (let i = 0; i < 12; i++) {
       const x = x0 + rand() * C, z = z0 + rand() * C;
       const h = this.heightAt(x, z);
-      if (h < 45 || this.net.nearest(x, z, 10) || this.roads.near(x, z, 10) || this.depots?.near(x, z, 10)) continue;
+      if (h < 45 || this.net.nearest(x, z, 10) || this.roads.near(x, z, 10) || this.inTown(x, z, 4)) continue;
       rocks.push({ x, y: h - 0.5, z, s: 2 + rand() * 5, sx: 0.8 + rand() * 0.6, sy: 0.5 + rand() * 0.5, ry: rand() * 6.28 });
     }
     this.instanced(group, this.rockGeo, this.rockMat, rocks);
@@ -275,7 +291,9 @@ export class Terrain {
       for (const b of st.spots) {
         if (b.x < x0 || b.x >= x0 + C || b.z < z0 || b.z >= z0 + C) continue;
         if (this.net.nearest(b.x, b.z, 18)) continue;
+        if (st.lift && liftDistance(st.lift, b.x, b.z) < 12) continue;
         const y = this.heightAt(b.x, b.z);
+        if (st.biome === 'mountain') { this.addChalet(group, b, y); continue; }
         const geo = new THREE.BoxGeometry(b.w, b.h + 1, b.d);
         boxUV(geo, b.w, b.h + 1, b.d);
         const mats = st.biome === 'christmas' ? this.northPoleMats : this.buildingMats;
@@ -301,6 +319,33 @@ export class Terrain {
       m.userData.own = true;
       group.add(m);
     }
+  }
+
+  // A ski chalet: stone base, wooden walls, a balcony, and a steep snowy gable roof (hotels are taller).
+  addChalet(group, b, y) {
+    const h = b.tall ? Math.min(b.h, 14) : b.h, w = b.w, d = b.d;
+    const add = (geo, mat, px, py, pz, shadow = true) => {
+      const m = new THREE.Mesh(geo, mat);
+      m.position.set(px, py, pz); m.rotation.y = b.yaw;
+      m.castShadow = shadow; m.receiveShadow = true; m.userData.own = true;
+      group.add(m);
+      return m;
+    };
+    add(new THREE.BoxGeometry(w + 0.3, 2.2, d + 0.3), this.chaletStone, b.x, y + 0.1, b.z);
+    const walls = new THREE.BoxGeometry(w, h - 0.8, d);
+    boxUV(walls, w, h - 0.8, d);
+    add(walls, this.chaletMats[b.mat % this.chaletMats.length], b.x, y + 1.2 + (h - 0.8) / 2, b.z);
+    // balcony along the front
+    const fwd = new THREE.Vector3(Math.sin(b.yaw), 0, Math.cos(b.yaw)), bx = b.x + fwd.x * (d / 2 + 0.55), bz = b.z + fwd.z * (d / 2 + 0.55);
+    for (let lvl = 0; lvl < (b.tall ? 2 : 1); lvl++) {
+      const by = y + 1.2 + (h - 0.8) * (0.45 + lvl * 0.3);
+      add(new THREE.BoxGeometry(w * 0.85, 0.15, 1.1), this.chaletDark, bx, by, bz);
+      add(new THREE.BoxGeometry(w * 0.85, 0.7, 0.08), this.chaletDark, b.x + fwd.x * (d / 2 + 1.05), by + 0.4, b.z + fwd.z * (d / 2 + 1.05));
+    }
+    // steep gable roof, deep in snow
+    const roof = add(this.gableGeo, this.snowRoofMat, b.x, y + 0.4 + h, b.z);
+    roof.scale.set(w + 1.8, d * 0.6 + 1.5, d + 1.6); // ridge along the width, steep slopes front and back
+    roof.userData.own = false; // shared geometry
   }
 
   // Strings of coloured lights along a house's eaves (Christmas).

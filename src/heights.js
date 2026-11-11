@@ -1,5 +1,5 @@
 import { WATER_Y, perlin, smooth, mix, fbm, mulberry32 } from './noise.js';
-import { biomeWeights, coastDistance, setBiomeSeed } from './biomes.js';
+import { biomeWeights, coastDistance, setBiomeSeed, mountainCentreDistance } from './biomes.js';
 
 // The infinite height field the world is generated from, built from the biome regions.
 export { WATER_Y, perlin, smooth, mix, fbm, mulberry32 };
@@ -15,13 +15,14 @@ const TRACK_BASE = {
   rainforest: (x, z) => 13 + fbm(x / 700 + 0.13, z / 700 + 0.29, 2, 13.7) * 14,
   swamp: () => 4.6,
   ocean: () => 5,
-  // into the mountains: a high line that climbs and dips on steep grades
-  mountain: (x, z) => 42 + fbm(x / 900, z / 900, 2, 14.9) * 22 + fbm(x / 300, z / 300, 2, 15.3) * 20,
+  // up the mountains: each mountain region is one big massif that rises towards its middle, and the
+  // line climbs right up its slopes on steep grades (and back down the other side)
+  mountain: (x, z) => 20 + 78 * smooth(1350, 200, mountainCentreDistance(x, z)) * (0.85 + 0.3 * fbm(x / 900, z / 900, 2, 14.9)),
 };
 
 function trackBase(bw, x, z) {
   let h = 0;
-  for (const b in bw.w) h += bw.w[b] * TRACK_BASE[b](x, z);
+  for (const b in bw.w) h += bw.w[b] * TRACK_BASE[b](x, z, bw);
   return Math.max(5, h);
 }
 // The line's height blends between biomes over a wide distance, so the climb into the mountains is gradual.
@@ -46,11 +47,12 @@ const LAND = {
   },
   // flat and boggy, with lots of murky pools just below the water line
   swamp: (b, x, z) => WATER_Y - 0.7 + fbm(x / 45, z / 45, 3, 71.3) * 3.2 + fbm(x / 300, z / 300, 2, 72.9) * 1.0,
-  // sharp peaks around the line, with snow on top
+  // the mountainside the line climbs: ridges and gullies (cuttings, embankments, bridges over the
+  // drops), plus sharp peaks sticking up that the line tunnels through
   mountain: (b, x, z) => {
-    const n = 1 - Math.abs(perlin.noise(x / 150, z / 150, 3.3));
-    const n2 = 1 - Math.abs(perlin.noise(x / 55, z / 55, 8.8));
-    return b + 3 + fbm(x / 170, z / 170, 4, 1.7) * 14 + n ** 4 * 170 + n2 * n2 * 26;
+    const peak = Math.max(0, perlin.noise(x / 190, z / 190, 3.3) - 0.22);   // separate peaks, about a fifth of the land
+    const crag = Math.max(0, perlin.noise(x / 60, z / 60, 8.8) - 0.3);
+    return b - 1.5 + fbm(x / 220, z / 220, 3, 1.7) * 18 + peak * peak * 900 + crag * 40;
   },
   // a long beach, then the open sea
   ocean: (b, x, z, bw) => {

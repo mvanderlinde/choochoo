@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { mulberry32, biomeWeights } from './heights.js';
 import { buildNorthPole } from './northpole.js';
+import { planLift, buildSkiArea } from './skitown.js';
 import { textTexture, glowTexture } from './textures.js';
 import { nightGlow } from './daynight.js';
 
@@ -20,8 +21,8 @@ const NAMES = {
     'Dragonfly Docks', 'Croaky Hollow', 'Gator Bend', 'Newt Nook', 'Squelchy Marsh'],
   rainforest: ['Parrot Peak', 'Monkey Junction', 'Toucan Town', 'Banana Grove', 'Coconut Creek', 'Jaguar Junction',
     'Sloth Hollow', 'Mango Falls', 'Vine Valley', 'Butterfly Bay', 'Tree Frog Town'],
-  mountain: ['Moose Mountain', 'Eagle Peak', 'Goat Ridge', 'Pine Valley', 'Echo Canyon', 'Marmot Meadow',
-    'Summit Station', 'Snowcap Summit', 'Cloudtop', 'Pebble Pass', 'Yodel Hill'],
+  mountain: ['Powder Peak', 'Chalet Village', 'Moose Mountain', 'Eagle Peak', 'Snowcap Summit', 'Fondue Falls',
+    'Goat Ridge', 'Ski Lift Hill', 'Echo Canyon', 'Yodel Hill', 'Cloudtop', 'Marmot Meadow', 'Hot Chocolate Hill'],
   ocean: ['Pebble Beach', 'Blueberry Bay', 'Seashell Shore', 'Starfish Point', 'Lighthouse Cove', 'Sandcastle Bay',
     'Dolphin Docks', 'Crab Claw Cove', 'Seagull Harbour', 'Coral Bay', 'Bucket and Spade'],
 };
@@ -126,6 +127,7 @@ class Station {
     this.people = [];
     this.group = this.buildPlatform(-side);
     if (biome === 'christmas') { this.decor = buildNorthPole(this, rand); scene.add(this.decor); } // it's the North Pole!
+    if (biome === 'mountain') this.lift = planLift(this); // a ski village, with a chairlift up the mountain
     this.buildSpots();
 
     this.waiting = [];
@@ -267,8 +269,11 @@ class Station {
 
   removePerson(p) { p.dispose(); this.people = this.people.filter((x) => x !== p); }
 
-  update(dt, train) {
-    const near = train.loco.group.position.distanceTo(this.trackPos) < 160;
+  update(dt, train, terrain) {
+    const dist = train.loco.group.position.distanceTo(this.trackPos);
+    if (this.lift && !this.ski && terrain) { this.ski = buildSkiArea(this, terrain, this.rand); this.scene.add(this.ski.group); }
+    if (this.ski && dist < 800) this.ski.update(dt);
+    const near = dist < 160;
     for (const p of this.waiting) p.wave = near;
     for (const tm of this.timers) tm.t -= dt;
     const due = this.timers.filter((tm) => tm.t <= 0);
@@ -281,6 +286,7 @@ class Station {
     for (const p of this.people) p.dispose();
     this.scene.remove(this.group);
     this.group.traverse((c) => c.geometry?.dispose());
+    if (this.ski) { this.scene.remove(this.ski.group); this.ski.dispose(); }
     if (this.decor) { this.scene.remove(this.decor); this.decor.traverse((c) => { if (c.geometry && !c.geometry.userData.shared) c.geometry.dispose(); }); }
   }
 }
@@ -312,7 +318,7 @@ export class StationManager {
   }
   remove(st) { st.dispose(); this.list.delete(st); }
   update(dt, train, lights = 0) {
-    for (const st of this.list) st.update(dt, train);
+    for (const st of this.list) st.update(dt, train, this.terrain);
     // the nearest stations get the real lights
     const lp = train.loco.group.position;
     const near = [...this.list].sort((a, b) => a.trackPos.distanceToSquared(lp) - b.trackPos.distanceToSquared(lp));

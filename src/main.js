@@ -46,11 +46,11 @@ const stations = new StationManager(scene, seed);
 const roads = new Roads(scene, net, stations, seed + 1);
 const terrain = new Terrain(scene, net, stations, roads);
 const depots = new DepotManager(scene, net);
-roads.terrain = terrain; roads.depots = depots; terrain.depots = depots;
+roads.terrain = terrain; roads.depots = depots; terrain.depots = depots; stations.terrain = terrain;
 net.onEdgeAdded = (e) => {
   if (e.wantsStation) {
     const st = stations.create(e);
-    terrain.markDirtyArea(st.trackPos.x, st.trackPos.z, st.townR + 70);
+    terrain.markDirtyArea(st.trackPos.x, st.trackPos.z, st.lift ? 420 : st.townR + 70); // (ski villages reach up the mountain)
   }
   const gone = depots.checkEdge(e);
   if (gone) terrain.markDirtyArea(gone.p.x, gone.p.z, 220);

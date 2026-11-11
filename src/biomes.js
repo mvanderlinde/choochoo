@@ -70,6 +70,19 @@ export function biomeWeights(x, z, soft = SOFT) {
   return { w, ocean, oceanW: w.ocean ?? 0 };
 }
 
+// Distance to the middle of the nearest mountain region (for the big smooth massif the line climbs).
+// (straight-line distance, without the border wiggles, so the slopes stay gentle)
+export function mountainCentreDistance(x, z) {
+  const wx = x, wz = z;
+  const ci = Math.round(wx / CELL), cj = Math.round(wz / CELL);
+  let best = Infinity;
+  for (let di = -2; di <= 2; di++) for (let dj = -2; dj <= 2; dj++) {
+    const c = cell(ci + di, cj + dj);
+    if (c.biome === 'mountain') best = Math.min(best, Math.hypot(wx - c.x, wz - c.z));
+  }
+  return best;
+}
+
 // Ocean regions: signed distance from the coastline (negative = land, positive = sea).
 export function coastDistance(c, x, z) {
   return (x - c.x) * c.dx + (z - c.z) * c.dz + fbm(x / 420, z / 420, 2, 61.3) * 90;
