@@ -380,7 +380,7 @@ renderer.setAnimationLoop(() => {
   if ((pruneTimer += dt) > 1) { pruneTimer = 0; net.prune(train, train.loco.group.position); }
   terrain.update(train.loco.group.position, 1);
   stations.update(dt, train, dayNight.lights);
-  depots.update(dt, train.loco.group.position, train);
+  depots.update(dt, train.loco.group.position, train, dayNight.lights);
   const crossings = crossingsAhead();
   updateCrossings(dt, crossings);
   updateStations(next, crossings.find((c) => c.dist > 0));

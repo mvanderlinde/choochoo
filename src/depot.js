@@ -225,6 +225,9 @@ class Depot {
       M.washSign = nightGlow(new THREE.MeshStandardMaterial({ map: tex, emissive: 0xffffff, emissiveMap: tex, roughness: 0.6 }), 'emissiveIntensity', 0.7);
       M.washBlue = new THREE.MeshStandardMaterial({ color: 0x2f8fe0, roughness: 0.5 });
       M.washPipe = new THREE.MeshStandardMaterial({ color: 0xd8dde3, metalness: 0.6, roughness: 0.35 });
+      // bright strip lights (on after dark), and a cool white glow round the entrances
+      M.washLight = nightGlow(new THREE.MeshStandardMaterial({ color: 0xeef6ff, emissive: 0xd6ecff, roughness: 0.4 }), 'emissiveIntensity', 2.5);
+      M.washHalo = nightGlow(new THREE.SpriteMaterial({ map: glowTexture(), color: 0xcfe6ff, transparent: true, depthWrite: false }), 'opacity', 0.8);
     }
     // low side walls, white with a blue stripe, so you can see the train inside
     for (const s of [-1, 1]) {
@@ -235,6 +238,13 @@ class Depot {
     for (const u of [u0, 6, 14, 24, 31, u1]) {
       for (const s of [-1, 1]) box(parent, M.washBlue, 0.4, top + 0.55, 0.4, x + this.side * s * half, (top - 0.55) / 2, u);
       box(parent, M.washBlue, half * 2 + 0.4, 0.45, 0.5, x, top, u);
+      box(parent, M.washLight, half * 2 - 0.5, 0.12, 0.22, x, top - 0.29, u); // a strip light under each beam
+    }
+    // lamps over both entrances
+    for (const u of [u0 - 0.5, u1 + 0.5]) {
+      const h = new THREE.Sprite(M.washHalo);
+      h.position.set(x, top - 0.4, u); h.scale.setScalar(5);
+      parent.add(h);
     }
     // spray bars: pipes up the posts and across the top, with nozzles pointing in
     for (const u of [6, 31]) {
@@ -567,7 +577,12 @@ class Depot {
 }
 
 export class DepotManager {
-  constructor(scene, net) { this.scene = scene; this.net = net; this.list = new Set(); this.count = 0; }
+  constructor(scene, net) {
+    this.scene = scene; this.net = net; this.list = new Set(); this.count = 0;
+    // after dark, real lights shine down inside the nearest train wash (a fixed pair, moved to
+    // whichever wash is nearest: adding and removing lights would make three.js recompile shaders)
+    this.washLights = [0, 1].map(() => { const l = new THREE.PointLight(0xd6ecff, 0, 26, 1.2); scene.add(l); return l; });
+  }
 
   // Build a depot beside a depot edge, on whichever side is clear of other track. By the sea it
   // always goes on the land side, and not at all if the yard (and the ground blending into it)
@@ -630,7 +645,17 @@ export class DepotManager {
 
   near(x, z, pad) { for (const dp of this.list) if (dp.outside(x, z) < pad) return dp; return null; }
 
-  update(dt, pos, train) { for (const dp of this.list) if (dp.p.distanceTo(pos) < 700) dp.update(dt, train); }
+  update(dt, pos, train, lights = 0) {
+    let nearest = null;
+    for (const dp of this.list) {
+      if (dp.p.distanceTo(pos) < 700) dp.update(dt, train);
+      if (!nearest || dp.washPoint.distanceToSquared(pos) < nearest.washPoint.distanceToSquared(pos)) nearest = dp;
+    }
+    this.washLights.forEach((l, i) => {
+      l.intensity = nearest ? 40 * lights : 0;
+      if (nearest) nearest.at(WASH_U[0] + (i + 0.5) * (WASH_U[1] - WASH_U[0]) / 2, V0, 5.6, l.position);
+    });
+  }
 
   // where the brushes are in the train washes near pos (for cleaning the train)
   washPoints(pos) { return [...this.list].filter((dp) => dp.washPoint.distanceTo(pos) < 300).map((dp) => dp.washPoint); }
