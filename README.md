@@ -23,9 +23,9 @@ The weather changes as you go: sunny, cloudy, rain or snow falling. Some biomes 
 
 The train gets dirtier the further it goes, with mud and soot building up from the wheels, faster through swamps and rainforests. Rain slowly washes it clean again and leaves it shiny and wet for a while.
 
-Every so often the line runs past a train depot. It's a big yard full of sidings and parked passenger and freight trains, with engines peeking out of the engine shed. It also has a water tower, a coal stage, stacks of containers, and a turntable that slowly spins an engine round while a little shunting engine trundles up and down.
+Every so often the line runs past a train depot (anywhere but up in the mountains: by the sea the yard is always on the land side, and in the swamp it's built up on an embankment above the pools). It's a big yard full of sidings and parked passenger and freight trains, with engines peeking out of the engine shed. It also has a water tower, a coal stage, stacks of containers, and a turntable that slowly spins an engine round while a little shunting engine trundles up and down.
 
-You can drive into a depot too: just before the yard the line splits, and picking that way takes the train along the first siding and through the train wash, then back onto the main line. The train slows down on its own as it gets close, and the camera moves to watch it roll through the spinning brushes, spray and bubbles. Each car comes out clean and shiny.
+You can drive into a depot too: just before the yard the line splits, and picking that way takes the train along the first siding and through the train wash, then back onto the main line. The train slows down on its own as it gets close, and the camera moves to watch it roll through the spinning brushes, spray and bubbles. Each car comes out clean and shiny. Depots are rare while the train is clean, but once it's really dirty they turn up much more often, about every kilometre and a half.
 
 Day turns to night about every six minutes. At dusk the sky glows orange, then the stars and moon come out. The engine's headlamp, the coach windows and the red tail lamp switch on, along with car and bus headlights, platform lamps and town windows. They all switch off again at dawn. The engine's headlamp also comes on inside tunnels.
 

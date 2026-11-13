@@ -374,6 +374,7 @@ renderer.setAnimationLoop(() => {
   wash = washAhead();
   throttle = washAssist(wash, throttle);
   train.update(dt, throttle);
+  net.dirt = train.dirt.amount;
   net.expand(train.edge, train.d);
   if ((pruneTimer += dt) > 1) { pruneTimer = 0; net.prune(train, train.loco.group.position); }
   terrain.update(train.loco.group.position, 1);

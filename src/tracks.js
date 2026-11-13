@@ -33,6 +33,7 @@ export class TrackNetwork {
   constructor(scene, seed = 7) {
     this.scene = scene;
     this.rand = mulberry32(seed);
+    this.dirt = 0; // how dirty the train is (set by main.js): dirty trains find more depots
     this.edges = new Set();
     this.grid = new Map();
     this.signs = new Set();
@@ -168,7 +169,17 @@ export class TrackNetwork {
     const clear = !ie || !ie.spans.some((s) => s.b > ie.length - 60);
     // and a stretch of plain track after a depot, once its yard loop has rejoined the main line
     const afterDepot = !!ie?.wantsDepot;
-    const junction = clear && !afterDepot && node.sinceJunction >= 2 && (node.sinceJunction >= 3 || this.rand() < 0.5);
+    // now and then a train depot (not up in the mountains, and away from stations), and a lot more often
+    // when the train is getting filthy and could do with a trip through the wash
+    const w = biomeWeights(node.pos.x, node.pos.z).w;
+    const urge = Math.min(1, Math.max(0, (this.dirt - 0.4) / 0.4)); // 0 below 40% dirty, 1 from 80%
+    const depotOk = clear && !afterDepot && (node.sinceDepot ?? 3) >= Math.round(7 - 4 * urge) && node.sinceStation >= 1 &&
+      node.sinceJunction >= 2 && // its turn-off is a junction too, so not right after another one
+      (w.mountain ?? 0) < 0.25; // (by the sea, DepotManager puts the yard on the land side)
+    // a dirty train's depot jumps the queue, before the next junction or station
+    // (only rolled when dirty, so a clean train gets the same world for a seed as before)
+    const depotFirst = depotOk && urge > 0 && this.rand() < urge;
+    const junction = !depotFirst && clear && !afterDepot && node.sinceJunction >= 2 && (node.sinceJunction >= 3 || this.rand() < 0.5);
     if (junction) {
       node.isJunction = true;
       this.makeEdge(node, { branch: 1 });
@@ -182,12 +193,8 @@ export class TrackNetwork {
       if (biomeWeights(node.pos.x, node.pos.z).oceanW > 0.3 && (node.follow ?? true)) node.defaultSide = node.left === node.outs[0] ? 'left' : 'right';
       if (node.inEdge) this.buildSign(node);
     } else {
-      const station = clear && !afterDepot && (node.sinceStation >= 4 || (node.sinceStation >= 2 && this.rand() < 0.5));
-      // now and then a train depot (on flattish land, away from stations)
-      const w = biomeWeights(node.pos.x, node.pos.z).w;
-      const depot = !station && clear && (node.sinceDepot ?? 3) >= 7 && node.sinceStation >= 1 &&
-        node.sinceJunction >= 2 && // its turn-off is a junction too, so not right after another one
-        (w.mountain ?? 0) < 0.25 && (w.ocean ?? 0) < 0.3 && (w.swamp ?? 0) < 0.5 && this.rand() < 0.35;
+      const station = !depotFirst && clear && !afterDepot && (node.sinceStation >= 4 || (node.sinceStation >= 2 && this.rand() < 0.5));
+      const depot = depotFirst || (!station && depotOk && this.rand() < 0.35 + 0.55 * urge);
       const e = this.makeEdge(node, { station, depot });
       if (e.depot) this.makeYardLoop(node, e);
     }

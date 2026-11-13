@@ -3,6 +3,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { mulberry32, smooth, mix } from './heights.js';
 import { makeLoco, makeTender, makeCoach, makeWagon } from './models.js';
 import { RAIL_TOP } from './tracks.js';
+import { biomeWeights, coastDistance } from './biomes.js';
 import { gravelTexture, glowTexture, stoneTexture, textTexture, brushTexture } from './textures.js';
 import { nightGlow } from './daynight.js';
 
@@ -113,6 +114,9 @@ class Depot {
     this.t = edge.tangentAt(d, new V3()); this.t.y = 0; this.t.normalize();
     this.lat = new V3(this.t.z, 0, -this.t.x).multiplyScalar(side); // world direction of +v
     this.bed = this.p.y - 0.55;
+    // in the swamp the yard is built up on an embankment with steep banks, clear of the pools
+    // (elsewhere the flattened yard blends gently into the land round it)
+    this.bank = (biomeWeights(this.p.x, this.p.z).w.swamp ?? 0) > 0.3;
 
     // yard frame: local z = u, local x = v * side (group +x is the left of the track direction)
     this.group = new THREE.Group();
@@ -565,10 +569,23 @@ class Depot {
 export class DepotManager {
   constructor(scene, net) { this.scene = scene; this.net = net; this.list = new Set(); this.count = 0; }
 
-  // Build a depot beside a depot edge, on whichever side is clear of other track.
+  // Build a depot beside a depot edge, on whichever side is clear of other track. By the sea it
+  // always goes on the land side, and not at all if the yard (and the ground blending into it)
+  // would reach into the water.
   create(edge) {
     const d = edge.length / 2, p = edge.pointAt(d, new V3()), t = edge.tangentAt(d, new V3()); t.y = 0; t.normalize();
-    for (const side of this.count % 2 ? [1, -1] : [-1, 1]) {
+    let sides = this.count % 2 ? [1, -1] : [-1, 1];
+    const sea = (side) => { // how close the yard comes to the sea (coast distance: > 0 is the sea), or -Infinity inland
+      let most = -Infinity;
+      for (let u = -U - 40; u <= U + 40; u += 20) for (let v = 0; v <= W + 40; v += 17) {
+        const x = p.x + t.x * u + t.z * v * side, z = p.z + t.z * u - t.x * v * side, bw = biomeWeights(x, z);
+        if (bw.ocean) most = Math.max(most, coastDistance(bw.ocean, x, z));
+      }
+      return most;
+    };
+    const seaBy = new Map(sides.map((s) => [s, sea(s)]));
+    if (sides.some((s) => seaBy.get(s) > -Infinity)) sides = sides.filter((s) => seaBy.get(s) < -8).sort((a, b) => seaBy.get(a) - seaBy.get(b));
+    for (const side of sides) {
       const lat = new V3(t.z, 0, -t.x).multiplyScalar(side);
       let clear = true;
       for (let u = -U - 20; clear && u <= U + 20; u += 12) for (let v = 14; clear && v <= W + 20; v += 12) {
@@ -603,7 +620,8 @@ export class DepotManager {
   flatten(x, z, h) {
     for (const dp of this.list) {
       const o = dp.outside(x, z);
-      if (o < 40) h = mix(dp.bed, h, smooth(0, 40, o));
+      const reach = dp.bank && h < dp.bed ? 2 + (dp.bed - h) * 2 : 40; // a bank about 1 in 2, or a gentle 40 m
+      if (o < reach) h = mix(dp.bed, h, smooth(0, reach, o));
     }
     return h;
   }
