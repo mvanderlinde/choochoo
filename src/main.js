@@ -46,6 +46,7 @@ const stations = new StationManager(scene, seed);
 const roads = new Roads(scene, net, stations, seed + 1);
 const terrain = new Terrain(scene, net, stations, roads);
 const depots = new DepotManager(scene, net);
+net.blocked = (x, z) => depots.near(x, z, 12); // new track keeps out of depot yards
 roads.terrain = terrain; roads.depots = depots; terrain.depots = depots; stations.terrain = terrain;
 net.onEdgeAdded = (e) => {
   if (e.wantsStation) {
@@ -53,7 +54,7 @@ net.onEdgeAdded = (e) => {
     terrain.markDirtyArea(st.trackPos.x, st.trackPos.z, st.lift ? 420 : st.townR + 70); // (ski villages reach up the mountain)
   }
   const gone = depots.checkEdge(e);
-  if (gone) terrain.markDirtyArea(gone.p.x, gone.p.z, 220);
+  if (gone) { terrain.markDirtyArea(gone.p.x, gone.p.z, 220); if (gone.loop) net.dropYardLoop(gone.loop); }
   if (e.wantsDepot) {
     const dp = depots.create(e);
     if (dp) terrain.markDirtyArea(dp.p.x, dp.p.z, 220);

@@ -6,11 +6,16 @@ import { findSpans, trackMode, sweep, rightOf, buildTunnel, buildBridge } from '
 
 // Endless track: a tree of edges generated on demand ahead of the train.
 // Every junction splits into a left and a right branch that fan apart, so
-// there are no dead ends. Edges far behind the train are deleted.
+// there are no dead ends. New track keeps clear of the track already there
+// (bending out of its way, or not branching where there's no room), and
+// edges far behind the train are deleted.
 export const RAIL_TOP = 0.3;
 const STEP = 8;          // spacing of curve control points (m)
 const LOOKAHEAD = 1500;  // keep this much track generated ahead (m)
 const CELL = 32;         // spatial hash cell size (m)
+const CLEAR = 22;        // new track keeps at least this far from other track (m)
+// extra curvature to try when the planned line is blocked (the last few are sharp, for when it's boxed in)
+const BENDS = [0, 0.002, -0.002, 0.004, -0.004, 0.006, -0.006, 0.009, -0.009, 0.012, -0.012];
 const V3 = THREE.Vector3;
 
 class Edge {
@@ -39,6 +44,7 @@ export class TrackNetwork {
     this.signs = new Set();
     this.onEdgeAdded = null;
     this.onEdgeRemoved = null;
+    this.blocked = null; // (x, z) => true where new track mustn't go (set by main.js: depot yards)
     this.ballastMat = new THREE.MeshStandardMaterial({ map: gravelTexture(), roughness: 1 });
     this.railMat = new THREE.MeshStandardMaterial({ color: 0x9aa0aa, metalness: 0.8, roughness: 0.35 });
     this.sleeperMat = new THREE.MeshStandardMaterial({ color: 0x6b4a2f, roughness: 0.9 });
@@ -74,37 +80,51 @@ export class TrackNetwork {
     else if (opts.station) curv = (s) => k0 * (1 - smooth(0, L * 0.3, s)) + k1 * smooth(L * 0.7, L, s); // straight middle
     else curv = (s) => mix(k0, k1, smooth(0, L, s));
 
-    const pts = [node.pos.clone()];
-    let x = node.pos.x, z = node.pos.z, h = node.heading, endCurv = curv(L), steered = false;
     const n = Math.round(L / STEP);
     // By the sea, one line follows the coast (a little way inland, so there's a beach); at junctions the
-    // other branch is free to wander off inland or out over the water.
+    // other branch heads off inland, and once it's well away from the sea it's free to wander.
     const follow = opts.branch === -1 ? false : (node.follow ?? true);
     const canSteer = !opts.station && !opts.depot;
-    for (let i = 1; i <= n; i++) {
-      let dh = curv(i * STEP) * STEP;
-      if (canSteer) {
-        const bw = biomeWeights(x, z);
-        if (bw.ocean && bw.oceanW > 0.15) {
-          const c = bw.ocean, sd = coastDistance(c, x, z);
-          const fx = Math.sin(h), fz = Math.cos(h);
-          let ax = -c.dz, az = c.dx;                         // along the coast...
-          if (ax * fx + az * fz < 0) { ax = -ax; az = -az; } // ...whichever way we're already heading
-          // the coast line keeps ~40 m inland of the water; the other branch heads off inland
-          const pull = follow ? THREE.MathUtils.clamp((-40 - sd) / 70, -0.9, 0.9) : (sd > -350 ? -0.8 : 0); // + = towards the sea
-          const want = Math.atan2(ax + c.dx * pull, az + c.dz * pull);
-          let diff = want - (h + dh);
-          diff = Math.atan2(Math.sin(diff), Math.cos(diff));
-          dh += THREE.MathUtils.clamp(diff, -0.05, 0.05) * Math.min(1, bw.oceanW * 1.5);
-          steered = true;
+    const path = (bend) => {
+      const pts = [node.pos.clone()];
+      let x = node.pos.x, z = node.pos.z, h = node.heading, endCurv = curv(L), steered = false;
+      for (let i = 1; i <= n; i++) {
+        let dh = curv(i * STEP) * STEP;
+        if (canSteer) {
+          const bw = biomeWeights(x, z);
+          const sd = bw.ocean && bw.oceanW > 0.15 ? coastDistance(bw.ocean, x, z) : 0;
+          if (bw.ocean && bw.oceanW > 0.15 && (follow || sd > -350)) {
+            const c = bw.ocean, fx = Math.sin(h), fz = Math.cos(h);
+            let ax = -c.dz, az = c.dx;                         // along the coast...
+            if (ax * fx + az * fz < 0) { ax = -ax; az = -az; } // ...whichever way we're already heading
+            // the coast line keeps ~40 m inland of the water; the other branch heads off inland
+            const pull = follow ? THREE.MathUtils.clamp((-40 - sd) / 70, -0.9, 0.9) : -0.8; // + = towards the sea
+            const want = Math.atan2(ax + c.dx * pull, az + c.dz * pull);
+            let diff = want - (h + dh);
+            diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+            dh += THREE.MathUtils.clamp(diff, -0.05, 0.05) * Math.min(1, bw.oceanW * 1.5) * (bend ? 0.3 : 1);
+            steered = true;
+          }
         }
+        dh += bend * smooth(0, 80, i * STEP) * STEP; // swerving round other track
+        h += dh;
+        if (i === n) endCurv = dh / STEP;
+        x += Math.sin(h) * STEP;
+        z += Math.cos(h) * STEP;
+        pts.push(new V3(x, trackBaseHeight(x, z), z));
       }
-      h += dh;
-      if (i === n) endCurv = dh / STEP;
-      x += Math.sin(h) * STEP;
-      z += Math.cos(h) * STEP;
-      pts.push(new V3(x, trackBaseHeight(x, z), z));
+      return { pts, x, z, h, endCurv, steered, hits: this.clash(node, pts) };
+    };
+    // Lay the planned line if it's clear of other track; if not, bend it one way or the other.
+    // Station and depot lines must be straight, so they don't bend (the caller lays plain track instead).
+    let best = null;
+    for (const bend of canSteer ? BENDS : [0]) {
+      const p = path(bend);
+      if (!best || p.hits < best.hits) best = p;
+      if (!p.hits) break;
     }
+    if (best.hits && opts.optional) return null;
+    const { pts, x, z, h, endCurv, steered } = best;
     if (opts.depot) {
       // the yard is flat, so level the middle of the line through it too
       const yMid = pts[Math.round(n / 2)].y;
@@ -123,6 +143,29 @@ export class TrackNetwork {
     e.to.follow = follow || (biomeWeights(x, z).oceanW < 0.05);
     e.to.sinceDepot = opts.depot ? 0 : (node.sinceDepot ?? 3) + 1;
     return this.register(node, e);
+  }
+
+  // How many points of a planned line come too close to other track (or somewhere blocked).
+  // Track right at the start node is ignored (that's where the line joins), and so are its sister
+  // branches until they've had room to fan apart.
+  clash(node, pts) {
+    let hits = 0;
+    const r = Math.ceil(CLEAR / CELL), o = node.pos;
+    for (const p of pts) {
+      if (Math.hypot(p.x - o.x, p.z - o.z) < 30) continue;
+      let hit = !!this.blocked?.(p.x, p.z);
+      const cx = Math.floor(p.x / CELL), cz = Math.floor(p.z / CELL);
+      for (let i = -r; i <= r && !hit; i++) for (let j = -r; j <= r && !hit; j++) {
+        for (const q of this.grid.get(this.key(cx + i, cz + j)) ?? []) {
+          if (Math.hypot(q.x - p.x, q.z - p.z) >= CLEAR) continue;
+          const fromHere = Math.hypot(q.x - o.x, q.z - o.z);
+          if (fromHere < 40 || (q.e.from === node && fromHere < 90)) continue;
+          hit = true; break;
+        }
+      }
+      if (hit) hits++;
+    }
+    return hits;
   }
 
   register(node, e) {
@@ -181,9 +224,11 @@ export class TrackNetwork {
     const depotFirst = depotOk && urge > 0 && this.rand() < urge;
     const junction = !depotFirst && clear && !afterDepot && node.sinceJunction >= 2 && (node.sinceJunction >= 3 || this.rand() < 0.5);
     if (junction) {
+      // each branch only if it has room; with room for just one there's no junction after all
+      const a = this.makeEdge(node, { branch: 1, optional: true });
+      const b = this.makeEdge(node, { branch: -1, optional: true });
+      if (!a || !b) { if (!a && !b) this.makeEdge(node, {}); return; }
       node.isJunction = true;
-      this.makeEdge(node, { branch: 1 });
-      this.makeEdge(node, { branch: -1 });
       const right = rightOf(node.outs[0].tangentAt(0, new V3()));
       const lat = (e) => e.pointAt(40, new V3()).sub(node.pos).dot(right);
       const [A, B] = node.outs;
@@ -195,13 +240,44 @@ export class TrackNetwork {
     } else {
       const station = !depotFirst && clear && !afterDepot && (node.sinceStation >= 4 || (node.sinceStation >= 2 && this.rand() < 0.5));
       const depot = depotFirst || (!station && depotOk && this.rand() < 0.35 + 0.55 * urge);
-      const e = this.makeEdge(node, { station, depot });
+      // (a station or depot needs a straight run; if that's blocked, it's plain track here instead)
+      const e = (station || depot) && this.makeEdge(node, { station, depot, optional: true }) ||
+        this.makeEdge(node, { optional: true }) || (this.retreat(node) ? null : this.makeEdge(node, {}));
+      if (!e) return;
       if (e.depot) this.makeYardLoop(node, e);
     }
   }
 
+  // A line boxed in by other track (no clear way on, however it bends) is taken away again, back to
+  // the junction it branched off at, which becomes plain track. Only when all of it is far off in
+  // the haze, so you never see track disappear; otherwise it squeezes past as best it can.
+  retreat(node) {
+    const chain = [];
+    let n = node;
+    while (n.inEdge && !n.isJunction && chain.length < 20) { chain.push(n.inEdge); n = n.inEdge.from; }
+    if (!n.isJunction || n.washSide || !chain.length || !n.outs.includes(chain[chain.length - 1])) return false;
+    const near = (p) => this.trainPos && p.distanceTo(this.trainPos) < 700;
+    if (near(n.pos) || chain.some((e) => e === this.trainEdge || near(e.mid) || near(e.to.pos))) return false;
+    for (const e of chain) this.removeEdge(e);
+    this.unJunction(n);
+    return true;
+  }
+
+  // Turn a junction back into plain track (one of its ways has been taken away), sign and all.
+  unJunction(node) {
+    node.isJunction = false; node.left = node.right = null; node.washSide = null;
+    const ie = node.inEdge;
+    if (!ie) return;
+    ie.objects = ie.objects.filter((o) => {
+      if (o.userData.sign?.node !== node) return true;
+      this.scene.remove(o); this.signs.delete(o.userData.sign);
+      return false;
+    });
+  }
+
   // Make sure there is LOOKAHEAD metres of track on every route ahead of the train.
   expand(edge, d) {
+    this.trainEdge = edge; this.trainPos = edge.pointAt(d, new V3());
     const queue = [[edge.to, edge.length - d]], seen = new Set();
     while (queue.length) {
       const [n, dist] = queue.shift();
@@ -220,10 +296,27 @@ export class TrackNetwork {
       const n = stack.pop();
       for (const e of n.outs) if (!keep.has(e)) { keep.add(e); stack.push(e.to); }
     }
-    for (const e of [...this.edges]) {
-      if (keep.has(e)) continue;
-      if ([e.from.pos, e.mid, e.to.pos].every((p) => p.distanceTo(pos) > 600)) this.removeEdge(e);
-    }
+    // A piece only goes once everything hanging off its end has gone too, so a branch that curls
+    // back near the line doesn't leave a stray bit of track behind, floating in the middle of nowhere.
+    const far = (e) => [e.from.pos, e.mid, e.to.pos].every((p) => p.distanceTo(pos) > 600);
+    const memo = new Map();
+    const removable = (e) => {
+      if (memo.has(e)) return memo.get(e);
+      memo.set(e, false);
+      const ok = !keep.has(e) && far(e) && e.to.outs.every((c) => keep.has(c) || removable(c));
+      memo.set(e, ok);
+      return ok;
+    };
+    for (const e of [...this.edges].filter(removable)) this.removeEdge(e);
+  }
+
+  // A depot that new track ran through has been taken away: its yard loop goes too, so the line
+  // carries straight on there (no junction to nowhere).
+  dropYardLoop(loop) {
+    const node = loop.from;
+    if (!this.edges.has(loop)) return;
+    this.removeEdge(loop);
+    this.unJunction(node);
   }
 
   removeEdge(e) {
