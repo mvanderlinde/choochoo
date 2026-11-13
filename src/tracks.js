@@ -121,6 +121,10 @@ export class TrackNetwork {
     // a line that has left the sea behind may follow the next coast it finds
     e.to.follow = follow || (biomeWeights(x, z).oceanW < 0.05);
     e.to.sinceDepot = opts.depot ? 0 : (node.sinceDepot ?? 3) + 1;
+    return this.register(node, e);
+  }
+
+  register(node, e) {
     node.outs.push(e);
     this.edges.add(e);
     this.buildEdgeMeshes(e);
@@ -129,12 +133,42 @@ export class TrackNetwork {
     return e;
   }
 
+  // A depot's yard loop: a second way from the start of the depot edge to its end, curving off into
+  // the yard, along the wash road (through the train wash) and back onto the main line. Its start
+  // becomes a junction; the main line stays the default, so you only go in if you pick it.
+  makeYardLoop(node, main) {
+    const dp = main.depot, n = Math.round(main.length / STEP), pts = [];
+    const p = new V3(), t = new V3();
+    for (let i = 0; i <= n; i++) {
+      const d = (i / n) * main.length;
+      main.pointAt(d, p); main.tangentAt(d, t);
+      const lat = new V3(t.z, 0, -t.x).normalize().multiplyScalar(dp.side); // same as the yard's +v
+      pts.push(p.clone().addScaledVector(lat, dp.loopOffset(d - main.length / 2)));
+    }
+    const e = new Edge(node, pts);
+    e.spans = [];
+    e.yard = dp;
+    e.to = main.to; // both ways end at the same node
+    dp.loop = e;
+    this.register(node, e);
+    node.isJunction = true;
+    const right = rightOf(main.tangentAt(0, new V3()));
+    const loopIsRight = e.pointAt(120, new V3()).sub(main.pointAt(120, new V3())).dot(right) > 0;
+    node.left = loopIsRight ? main : e; node.right = loopIsRight ? e : main;
+    node.defaultSide = loopIsRight ? 'left' : 'right';
+    node.washSide = loopIsRight ? 'right' : 'left';
+    if (node.inEdge) this.buildSign(node);
+    return e;
+  }
+
   generateOuts(node) {
     if (node.outs.length) return;
     // no junctions or stations in (or just after) a tunnel or on a bridge
     const ie = node.inEdge;
     const clear = !ie || !ie.spans.some((s) => s.b > ie.length - 60);
-    const junction = clear && node.sinceJunction >= 2 && (node.sinceJunction >= 3 || this.rand() < 0.5);
+    // and a stretch of plain track after a depot, once its yard loop has rejoined the main line
+    const afterDepot = !!ie?.wantsDepot;
+    const junction = clear && !afterDepot && node.sinceJunction >= 2 && (node.sinceJunction >= 3 || this.rand() < 0.5);
     if (junction) {
       node.isJunction = true;
       this.makeEdge(node, { branch: 1 });
@@ -148,21 +182,24 @@ export class TrackNetwork {
       if (biomeWeights(node.pos.x, node.pos.z).oceanW > 0.3 && (node.follow ?? true)) node.defaultSide = node.left === node.outs[0] ? 'left' : 'right';
       if (node.inEdge) this.buildSign(node);
     } else {
-      const station = clear && (node.sinceStation >= 4 || (node.sinceStation >= 2 && this.rand() < 0.5));
+      const station = clear && !afterDepot && (node.sinceStation >= 4 || (node.sinceStation >= 2 && this.rand() < 0.5));
       // now and then a train depot (on flattish land, away from stations)
       const w = biomeWeights(node.pos.x, node.pos.z).w;
       const depot = !station && clear && (node.sinceDepot ?? 3) >= 7 && node.sinceStation >= 1 &&
+        node.sinceJunction >= 2 && // its turn-off is a junction too, so not right after another one
         (w.mountain ?? 0) < 0.25 && (w.ocean ?? 0) < 0.3 && (w.swamp ?? 0) < 0.5 && this.rand() < 0.35;
-      this.makeEdge(node, { station, depot });
+      const e = this.makeEdge(node, { station, depot });
+      if (e.depot) this.makeYardLoop(node, e);
     }
   }
 
   // Make sure there is LOOKAHEAD metres of track on every route ahead of the train.
   expand(edge, d) {
-    const queue = [[edge.to, edge.length - d]];
+    const queue = [[edge.to, edge.length - d]], seen = new Set();
     while (queue.length) {
       const [n, dist] = queue.shift();
-      if (dist > LOOKAHEAD) continue;
+      if (dist > LOOKAHEAD || seen.has(n)) continue;
+      seen.add(n); // (a yard loop and its main line lead to the same node)
       this.generateOuts(n);
       for (const e of n.outs) queue.push([e.to, dist + e.length]);
     }
@@ -191,7 +228,7 @@ export class TrackNetwork {
     }
     this.unindexEdge(e);
     e.from.outs = e.from.outs.filter((x) => x !== e);
-    e.to.inEdge = null;
+    if (e.to.inEdge === e) e.to.inEdge = null;
     this.onEdgeRemoved?.(e);
   }
 

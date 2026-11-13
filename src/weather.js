@@ -147,7 +147,7 @@ export class Weather {
     this.rain.material.color.setHex(0xa9bccf).multiplyScalar(dim);
 
     this.updateParticles(dt, camera.position, s.rain * out, s.snowfall * out, s.leaves * out);
-    this.sound?.setRain(s.rain * out);
+    this.sound?.setRain(Math.max(s.rain * out, this.extraWater ?? 0));
 
     // corner icon for little weather watchers
     // plus a picture of the biome we're in

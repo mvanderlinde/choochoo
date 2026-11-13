@@ -59,7 +59,7 @@ net.onEdgeAdded = (e) => {
     if (dp) terrain.markDirtyArea(dp.p.x, dp.p.z, 220);
   }
   roads.checkEdge(e);
-  if (!e.wantsStation && !e.wantsDepot) roads.maybeCreate(e);
+  if (!e.wantsStation && !e.wantsDepot && !e.yard) roads.maybeCreate(e);
   terrain.markDirtyEdge(e);
 };
 net.onEdgeRemoved = (e) => {
@@ -204,6 +204,31 @@ function updateStations(next, crossing) {
 }
 let everMoved = false;
 
+// ---------- train wash ----------
+// The wash on our route (if we turned into a depot): how far the head of the train is from its
+// entrance, and how far the head still has to go until the tail is out of it again.
+const WASH_SPEED = 4;    // m/s through the wash
+const WASH_BRAKE = 2.5;  // gentle braking down to it
+const lastCar = train.cars[train.cars.length - 1];
+const TRAIN_LEN = -(lastCar.center - lastCar.length / 2);
+function washAhead() {
+  for (const { edge, start } of train.routeAhead(300)) {
+    if (!edge.yard) continue;
+    const [a, b] = edge.yard.washSpan();
+    const w = { dp: edge.yard, toWash: start + a, left: start + b + TRAIN_LEN };
+    return w.left > 0 ? w : null;
+  }
+  return null;
+}
+// Slow down on the way in and roll through at a gentle pace (⬇ still stops the train).
+function washAssist(w, throttle) {
+  if (!w) return throttle;
+  const limit = Math.sqrt(WASH_SPEED ** 2 + 2 * WASH_BRAKE * Math.max(0, w.toWash - 5));
+  train.speed = Math.min(train.speed, limit);
+  if (w.toWash < 40 && throttle >= 0) return train.speed < WASH_SPEED ? 1 : 0; // creep in and through
+  return Math.min(throttle, 0);
+}
+
 // ---------- level crossings ----------
 // Crossings on our route ahead, with the distance from the train's head to each.
 function crossingsAhead() {
@@ -286,6 +311,10 @@ function updateCamera(dt, snap) {
     look.copy(st.trackPos).add({ x: 0, y: 1.5, z: 0 });
     k = 1 - Math.exp(-dt * 1.5);
   }
+  if (wash && wash.toWash < 70 && camMode !== 2) { // watch the train go through the train wash
+    wash.dp.washView(desired, look);
+    k = 1 - Math.exp(-dt * 1.2);
+  }
   if (snap) k = 1;
   camPos.lerp(desired, k);
   camLook.lerp(look, k);
@@ -296,7 +325,7 @@ function updateCamera(dt, snap) {
 
 // ---------- loop ----------
 const clock = new THREE.Clock();
-let time = 0, chuffAcc = 0, chuffBeat = 0, pruneTimer = 0;
+let time = 0, chuffAcc = 0, chuffBeat = 0, pruneTimer = 0, wash = null;
 updateCamera(0, true);
 
 renderer.setAnimationLoop(() => {
@@ -305,12 +334,14 @@ renderer.setAnimationLoop(() => {
   const next = stationAhead();
   let throttle = !started ? 0 : held.has('ArrowUp') ? 1 : held.has('ArrowDown') ? -1 : 0;
   throttle = stopAssist(next, throttle);
+  wash = washAhead();
+  throttle = washAssist(wash, throttle);
   train.update(dt, throttle);
   net.expand(train.edge, train.d);
   if ((pruneTimer += dt) > 1) { pruneTimer = 0; net.prune(train, train.loco.group.position); }
   terrain.update(train.loco.group.position, 1);
   stations.update(dt, train, dayNight.lights);
-  depots.update(dt, train.loco.group.position);
+  depots.update(dt, train.loco.group.position, train);
   const crossings = crossingsAhead();
   updateCrossings(dt, crossings);
   updateStations(next, crossings.find((c) => c.dist > 0));
@@ -333,6 +364,9 @@ renderer.setAnimationLoop(() => {
   dayNight.update(dt, camera, weather.overcast ?? 0, tunnelBlend);
   train.steamShade = 1 - 0.6 * dayNight.night;
   weather.update(dt, train.loco.group.position, camera, tunnelBlend, dayNight);
+  train.dirt.update(dt, train.ds, (weather.s?.rain ?? 0) * (1 - tunnelBlend), weather.bw?.w, depots.washPoints(train.loco.group.position));
+  weather.extraWater = train.dirt.washing ? 1 : 0; // the splashing of the wash (played with the rain sound)
+  if (train.dirt.washDone) sound.ding();
   const lp = train.loco.group.position;
   sun.position.copy(lp).addScaledVector(dayNight.sunDir, dayNight.sunHeight >= 0 ? 250 : -250); // sun or moon
   sun.target.position.copy(lp);

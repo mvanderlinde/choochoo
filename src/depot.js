@@ -3,12 +3,14 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { mulberry32, smooth, mix } from './heights.js';
 import { makeLoco, makeTender, makeCoach, makeWagon } from './models.js';
 import { RAIL_TOP } from './tracks.js';
-import { gravelTexture, glowTexture, stoneTexture } from './textures.js';
+import { gravelTexture, glowTexture, stoneTexture, textTexture, brushTexture } from './textures.js';
 import { nightGlow } from './daynight.js';
 
 // Train depots: every so often a big yard opens up beside the line, full of sidings, parked
 // trains, an engine shed, a water tower, a coal stage and a turntable that slowly spins an
-// engine round, while a little shunting engine potters up and down.
+// engine round, while a little shunting engine potters up and down. The first siding is the wash
+// road: the train can turn off the main line onto it (a loop that rejoins the main line at the far
+// end of the yard) and roll through the train wash, which scrubs the dirt off.
 //
 // Layout is in yard coordinates: u along the main line (0 = middle of the edge), v sideways
 // away from it (0 = main line). The static parts are merged into one mesh per material.
@@ -16,12 +18,16 @@ import { nightGlow } from './daynight.js';
 const V3 = THREE.Vector3;
 const U = 120, W = 62;                 // yard half-length and width
 const TRACKS = 6, V0 = 9, GAP = 5;     // sidings at v = 9, 14, ... 34
-const LEAD_U = -112, LEAD_END = -22;   // the diagonal lead track from the main line
+const LEAD_U = -100, LEAD_END = -22;   // the diagonal lead track from the wash road to the other sidings
 const SHED_U = [42, 96];               // engine shed, over the last three sidings
 const BUFFER_U = 78;
 const vOf = (i) => V0 + i * GAP;
 const vLast = vOf(TRACKS - 1);
 const leadU = (v) => LEAD_U + (v / vLast) * (LEAD_END - LEAD_U);
+// The wash road (siding 0) is real track, part of the line: off the main line, along v = V0 through
+// the train wash, and back on again.
+const LOOP_OUT = [-158, leadU(V0) - 1], LOOP_BACK = [92, 156];
+const WASH_U = [2, 36], BRUSH_U = 19;   // the wash, and where its brushes do the scrubbing
 
 let M = null;
 function mats() {
@@ -115,9 +121,9 @@ class Depot {
     const S = new THREE.Group(); // static parts, baked below
     const m = mats();
 
-    // sidings and the lead track that feeds them
-    this.track(S, 0, LEAD_U, vLast, LEAD_END);
-    for (let i = 0; i < TRACKS; i++) {
+    // sidings and the lead track that feeds them (off the wash road, which is part of the line)
+    this.track(S, V0, leadU(V0), vLast, LEAD_END);
+    for (let i = 1; i < TRACKS; i++) {
       const v = vOf(i), inShed = i >= TRACKS - 3;
       const end = inShed ? SHED_U[1] - 2 : BUFFER_U;
       this.track(S, v, leadU(v) + 3, v, end);
@@ -131,7 +137,8 @@ class Depot {
     this.shed(S, r);
     this.waterTower(S, -8, vLast + 9);
     this.coalStage(S, 22, vLast + 9);
-    this.signalBox(S, LEAD_U + 6, 5.8);
+    this.signalBox(S, -100, 15.5);
+    this.trainWash(S);
     this.containers(S, r, -92, 44);
     this.crates(S, r, -78, 30);
     this.hut(S, -104, 52);
@@ -143,10 +150,9 @@ class Depot {
     const wagonKinds = ['box', 'tank', 'coal', 'logs', 'container'];
     const wagonColors = [0x9c4a2e, 0x3d6d8f, 0xd88a2f, 0x5c7d3a, 0xc23b3b, 0x777f88];
     const pick = (a) => a[Math.floor(r() * a.length)];
-    // track 0: a passenger train ready to go
-    this.consist(S, 0, BUFFER_U - 6, [makeLoco(pick(locoColors), true), makeTender(), ...Array.from({ length: 2 + Math.floor(r() * 2) }, () => makeCoach(pick(coachColors)))]);
-    // track 1: a long freight train
-    this.consist(S, 1, BUFFER_U - 3, Array.from({ length: 6 + Math.floor(r() * 3) }, () => makeWagon(pick(wagonKinds), pick(wagonColors))));
+    // track 1: a passenger train ready to go, or a long freight train
+    if (r() < 0.5) this.consist(S, 1, BUFFER_U - 6, [makeLoco(pick(locoColors), true), makeTender(), ...Array.from({ length: 2 + Math.floor(r() * 2) }, () => makeCoach(pick(coachColors)))]);
+    else this.consist(S, 1, BUFFER_U - 3, Array.from({ length: 6 + Math.floor(r() * 3) }, () => makeWagon(pick(wagonKinds), pick(wagonColors))));
     // track 2: the shunter's track; a couple of wagons parked at the end
     this.consist(S, 2, BUFFER_U - 3, Array.from({ length: 2 }, () => makeWagon(pick(wagonKinds), pick(wagonColors))));
     // shed tracks: engines peeking out of the doors, and one outside having a rest
@@ -185,10 +191,183 @@ class Depot {
     this.shunterGroup.position.set(this.x(vOf(2)), RAIL_TOP, 0);
     this.group.add(this.shunterGroup);
 
+    this.washParts();
     this.scene.add(this.group);
+    this.group.updateMatrixWorld(true);
+    this.washPoint = this.group.localToWorld(new V3(this.x(V0), 2, BRUSH_U)); // middle of the brushes
   }
 
   x(v) { return v * this.side; }
+
+  // yard coordinates -> world position
+  at(u, v, y, target = new V3()) { return target.copy(this.p).addScaledVector(this.t, u).addScaledVector(this.lat, v).setY(this.p.y + y); }
+
+  // The wash, as distances along the yard loop (whose ramps in and out are the same, so u = 0 is half way).
+  washSpan() { const h = this.loop.length / 2; return [h + WASH_U[0], h + WASH_U[1]]; }
+
+  // A good spot to watch the train go through the wash from: beside the main line, just past the
+  // brushes, looking back at them and the wash's entrance.
+  washView(pos, look) { this.at(31, -12, 10, pos); this.at(16, V0, 1.8, look); }
+
+  // How far the yard loop is from the main line, at u along it.
+  loopOffset(u) { return V0 * smooth(LOOP_OUT[0], LOOP_OUT[1], u) * smooth(LOOP_BACK[1], LOOP_BACK[0], u); }
+
+  // The train wash's frame, walls and signs (baked with the rest of the yard).
+  trainWash(parent) {
+    const m = mats(), x = this.x(V0), half = 2.85, top = 6.6;
+    const [u0, u1] = WASH_U, len = u1 - u0, mid = (u0 + u1) / 2;
+    if (!M.washSign) {
+      const tex = textTexture('🫧 TRAIN WASH 🫧', '#1f6fc4');
+      M.washSign = nightGlow(new THREE.MeshStandardMaterial({ map: tex, emissive: 0xffffff, emissiveMap: tex, roughness: 0.6 }), 'emissiveIntensity', 0.7);
+      M.washBlue = new THREE.MeshStandardMaterial({ color: 0x2f8fe0, roughness: 0.5 });
+      M.washPipe = new THREE.MeshStandardMaterial({ color: 0xd8dde3, metalness: 0.6, roughness: 0.35 });
+    }
+    // low side walls, white with a blue stripe, so you can see the train inside
+    for (const s of [-1, 1]) {
+      box(parent, m.white, 0.3, 2.0, len, x + this.side * s * half, 0.45, mid);
+      box(parent, M.washBlue, 0.34, 0.35, len, x + this.side * s * half, 1.1, mid);
+    }
+    // gantries: posts and a beam across the top at each end, at the spray bars and over the brushes
+    for (const u of [u0, 6, 14, 24, 31, u1]) {
+      for (const s of [-1, 1]) box(parent, M.washBlue, 0.4, top + 0.55, 0.4, x + this.side * s * half, (top - 0.55) / 2, u);
+      box(parent, M.washBlue, half * 2 + 0.4, 0.45, 0.5, x, top, u);
+    }
+    // spray bars: pipes up the posts and across the top, with nozzles pointing in
+    for (const u of [6, 31]) {
+      for (const s of [-1, 1]) {
+        const px = x + this.side * s * (half - 0.35);
+        cyl(parent, M.washPipe, 0.09, 0.09, top - 0.3, px, (top - 0.3) / 2, u + 0.35, 8);
+        for (let y = 0.8; y < 5; y += 1.2) box(parent, M.washPipe, 0.3, 0.12, 0.12, px - this.side * s * 0.15, y, u + 0.35);
+      }
+      box(parent, M.washPipe, half * 2 - 0.6, 0.16, 0.16, x, top - 0.45, u + 0.35);
+    }
+    // signs over both ends
+    const signGeo = new THREE.BoxGeometry(6.5, 1.3, 0.2);
+    const plain = M.washBlue;
+    for (const [u, face] of [[u0, 5], [u1, 4]]) {
+      const mats6 = [plain, plain, plain, plain, plain, plain]; mats6[face] = M.washSign;
+      const sign = new THREE.Mesh(signGeo, mats6);
+      sign.position.set(x, top + 0.95, u + (face === 5 ? -0.3 : 0.3));
+      parent.add(sign);
+    }
+  }
+
+  // The moving parts of the wash: spinning brushes, water spray and bubbles.
+  washParts() {
+    const x = this.x(V0);
+    const g = this.wash = new THREE.Group();
+    this.group.add(g);
+    if (!M.brushes) {
+      M.brushes = [brushTexture('#2f8fe0', '#9fd4ff'), brushTexture('#ff6fae', '#ffd1e6')]
+        .map((map) => new THREE.MeshStandardMaterial({ map, roughness: 0.9 }));
+      M.spray = new THREE.PointsMaterial({ map: glowTexture(), color: 0xcfeeff, size: 0.45, transparent: true, depthWrite: false, opacity: 0.85 });
+      M.bubble = new THREE.PointsMaterial({ map: glowTexture(), size: 0.7, vertexColors: true, transparent: true, depthWrite: false, opacity: 0.9 });
+    }
+    // two pairs of tall brushes either side, and one long one across the top
+    const tallGeo = new THREE.CylinderGeometry(0.55, 0.55, 3.5, 18);
+    this.brushes = [];
+    for (const [u, mat] of [[14, M.brushes[0]], [19, M.brushes[1]]]) {
+      for (const s of [-1, 1]) {
+        const b = new THREE.Mesh(tallGeo, mat);
+        b.position.set(x + this.side * s * 2.1, 2.45, u);
+        b.castShadow = true;
+        g.add(b);
+        this.brushes.push({ mesh: b, dir: s });
+      }
+    }
+    const topArm = new THREE.Group();
+    topArm.position.set(x, 5.8, 24); topArm.rotation.z = Math.PI / 2;
+    const tb = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 4.6, 18), M.brushes[0]);
+    tb.castShadow = true;
+    topArm.add(tb); g.add(topArm);
+    this.brushes.push({ mesh: tb, dir: 1 });
+
+    // water: droplets squirting in from the spray bars and falling
+    const SPRAY_N = 600;
+    this.spray = Array.from({ length: SPRAY_N }, () => ({ p: new V3(), v: new V3(), life: 0 }));
+    this.sprayGeo = new THREE.BufferGeometry();
+    this.sprayGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(SPRAY_N * 3), 3));
+    const sp = new THREE.Points(this.sprayGeo, M.spray);
+    sp.frustumCulled = false;
+    // bubbles: pastel blobs drifting up out of the brushes
+    const BUB_N = 220;
+    this.bubbles = Array.from({ length: BUB_N }, () => ({ p: new V3(), v: new V3(), life: 0 }));
+    this.bubGeo = new THREE.BufferGeometry();
+    this.bubGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(BUB_N * 3), 3));
+    const cols = new Float32Array(BUB_N * 3), c = new THREE.Color();
+    for (let i = 0; i < BUB_N; i++) { c.setHex([0xffffff, 0xd6efff, 0xffd6ec, 0xe8dcff][i % 4]); cols.set([c.r, c.g, c.b], i * 3); }
+    this.bubGeo.setAttribute('color', new THREE.BufferAttribute(cols, 3));
+    const bb = new THREE.Points(this.bubGeo, M.bubble);
+    bb.frustumCulled = false;
+    g.add(sp, bb);
+    this.washOn = 0; this.sprayAcc = 0; this.bubAcc = 0;
+  }
+
+  // Is any part of the train in (or just about to go into) the wash?
+  trainInWash(train) {
+    for (const car of train.cars) {
+      const { u, v } = this.local(car.group.position.x, car.group.position.z);
+      if (Math.abs(v - V0) < 2.5 && u > WASH_U[0] - 12 - car.length / 2 && u < WASH_U[1] + car.length / 2) return true;
+    }
+    return false;
+  }
+
+  updateWash(dt, train) {
+    const target = train && this.trainInWash(train) ? 1 : 0;
+    this.washOn += (target - this.washOn) * (1 - Math.exp(-dt * (target ? 3 : 1)));
+    const on = this.washOn, x = this.x(V0);
+    for (const b of this.brushes) b.mesh.rotation.y += dt * on * 7 * b.dir;
+    // spray: from the nozzles on both spray bars, squirting in towards the middle
+    this.sprayAcc += dt * on * 900;
+    for (const p of this.spray) {
+      if (p.life <= 0) {
+        if (this.sprayAcc < 1) continue;
+        this.sprayAcc -= 1;
+        const s = Math.random() < 0.5 ? -1 : 1, overhead = Math.random() < 0.25;
+        const u = (Math.random() < 0.5 ? 6 : 31) + 0.35;
+        if (overhead) {
+          p.p.set(x + this.side * (Math.random() * 2 - 1) * 2.3, 6.0, u);
+          p.v.set((Math.random() - 0.5) * 0.6, -4 - Math.random() * 3, (Math.random() - 0.5) * 1.2);
+        } else {
+          p.p.set(x + this.side * s * 2.3, 0.8 + Math.floor(Math.random() * 4) * 1.2, u);
+          p.v.set(-this.side * s * (5 + Math.random() * 3), 1 + Math.random() * 1.5, (Math.random() - 0.5) * 1.2);
+        }
+        p.life = 0.5 + Math.random() * 0.3;
+      }
+      p.life -= dt;
+      p.v.y -= 9.8 * dt;
+      p.p.addScaledVector(p.v, dt);
+      if (p.p.y < -0.4) p.life = 0;
+    }
+    this.sprayAcc = Math.min(this.sprayAcc, 50);
+    this.pointsOut(this.spray, this.sprayGeo);
+    // bubbles: drifting up and away from the brushes
+    this.bubAcc += dt * on * 70;
+    for (const p of this.bubbles) {
+      if (p.life <= 0) {
+        if (this.bubAcc < 1) continue;
+        this.bubAcc -= 1;
+        const s = Math.random() < 0.5 ? -1 : 1;
+        p.p.set(x + this.side * s * (1.6 + Math.random() * 0.6), 0.6 + Math.random() * 4, 12 + Math.random() * 14);
+        p.v.set(this.side * s * (Math.random() * 0.6), 0.5 + Math.random() * 0.8, (Math.random() - 0.5) * 0.8);
+        p.life = 2 + Math.random() * 2;
+      }
+      p.life -= dt;
+      p.p.addScaledVector(p.v, dt);
+      p.p.x += Math.sin(p.life * 3 + p.p.z) * 0.3 * dt;
+    }
+    this.bubAcc = Math.min(this.bubAcc, 20);
+    this.pointsOut(this.bubbles, this.bubGeo);
+  }
+
+  // live particles to the front of the buffer (dead ones are drawn off out of sight)
+  pointsOut(list, geo) {
+    const a = geo.attributes.position.array;
+    let n = 0;
+    for (const p of list) if (p.life > 0) { a[n * 3] = p.p.x; a[n * 3 + 1] = p.p.y; a[n * 3 + 2] = p.p.z; n++; }
+    geo.setDrawRange(0, n);
+    geo.attributes.position.needsUpdate = true;
+  }
 
   // straight piece of track from (v1, u1) to (v2, u2)
   track(parent, v1, u1, v2, u2) {
@@ -356,7 +535,8 @@ class Depot {
     return Math.hypot(du, dv);
   }
 
-  update(dt) {
+  update(dt, train) {
+    this.updateWash(dt, train);
     // turntable: turn half way round, pause, repeat
     if (this.ttPause > 0) this.ttPause -= dt;
     else {
@@ -377,7 +557,8 @@ class Depot {
 
   dispose() {
     this.scene.remove(this.group);
-    for (const o of [this.statics, this.ttGroup]) o.traverse((c) => { if (c.isMesh) c.geometry.dispose(); });
+    this.sprayGeo.dispose(); this.bubGeo.dispose();
+    for (const o of [this.statics, this.ttGroup, this.wash]) o.traverse((c) => { if (c.isMesh) c.geometry.dispose(); });
   }
 }
 
@@ -409,7 +590,7 @@ export class DepotManager {
   checkEdge(e) {
     const v = new V3();
     for (const dp of [...this.list]) {
-      if (dp.edge === e) continue;
+      if (dp.edge === e || e.yard === dp) continue;
       for (let d = 0; d <= e.length; d += 6) {
         e.pointAt(d, v);
         if (dp.outside(v.x, v.z) < 8) { this.remove(dp); return dp; }
@@ -431,5 +612,8 @@ export class DepotManager {
 
   near(x, z, pad) { for (const dp of this.list) if (dp.outside(x, z) < pad) return dp; return null; }
 
-  update(dt, pos) { for (const dp of this.list) if (dp.p.distanceTo(pos) < 700) dp.update(dt); }
+  update(dt, pos, train) { for (const dp of this.list) if (dp.p.distanceTo(pos) < 700) dp.update(dt, train); }
+
+  // where the brushes are in the train washes near pos (for cleaning the train)
+  washPoints(pos) { return [...this.list].filter((dp) => dp.washPoint.distanceTo(pos) < 300).map((dp) => dp.washPoint); }
 }

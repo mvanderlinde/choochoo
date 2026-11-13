@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { makeLoco, makeTender, makeCoach } from './models.js';
 import { RAIL_TOP } from './tracks.js';
 import { puffTexture } from './textures.js';
+import { Dirt } from './dirt.js';
 
 const MAX_SPEED = 20, ACCEL = 4.5, BRAKE = 9;
 
@@ -24,6 +25,8 @@ export class Train {
     }
     this.loco = this.cars[0];
     this.cars[this.cars.length - 1].tail.visible = true;
+    this.dirt = new Dirt(this.cars);
+    this.ds = 0;
 
     this.puffs = [];
     const tex = puffTexture();
@@ -83,7 +86,7 @@ export class Train {
   update(dt, throttle) {
     if (throttle > 0) this.speed = Math.min(MAX_SPEED, this.speed + ACCEL * dt);
     else if (throttle < 0) this.speed = Math.max(0, this.speed - BRAKE * dt);
-    const ds = this.speed * dt;
+    const ds = this.ds = this.speed * dt;
     this.d += ds;
     while (this.d > this.edge.length) {
       const ed = this.edge;

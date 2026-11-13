@@ -187,3 +187,14 @@ export function stoneTexture() {
     }
   }, true);
 }
+
+// Bristly stripes for the train wash brushes (u wraps round the brush, so the stripes show it spinning).
+export function brushTexture(a, b) {
+  return canvasTex(256, 128, (g, w, h) => {
+    for (let x = 0; x < w; x += 32) { g.fillStyle = (x / 32) % 2 ? b : a; g.fillRect(x, 0, 32, h); }
+    for (let i = 0; i < 900; i++) { // bristle tips
+      g.fillStyle = `rgba(255,255,255,${Math.random() * 0.35})`;
+      g.fillRect(Math.random() * w, Math.random() * h, 1.5, 4 + Math.random() * 8);
+    }
+  }, true);
+}

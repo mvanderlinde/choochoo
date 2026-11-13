@@ -17,6 +17,10 @@ export function nightGlow(obj, prop, max, train = false) {
   if (prop === 'opacity') obj.visible = false;
   return obj;
 }
+// a copy of a material that glows at night glows like the original
+export function glowCopy(src, dst) {
+  for (const g of glowing.filter((g) => g.obj === src)) glowing.push({ ...g, obj: dst });
+}
 
 export class DayNight {
   constructor(scene, hour = 9) {
