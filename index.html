@@ -2,9 +2,13 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Choo Choo">
 <title>Choo Choo Train</title>
-<meta name="description" content="Drive a steam train through an endless 3D world: stations, tunnels, bridges, level crossings, weather and day and night. Made for toddlers: arrow keys and space.">
+<meta name="description" content="Drive a steam train through an endless 3D world: stations, tunnels, bridges, level crossings, weather and day and night. Made for toddlers: arrow keys and space, or big touch buttons on a tablet or phone.">
 <meta name="theme-color" content="#2f7fe0">
 <link rel="canonical" href="https://mvanderlinde.github.io/choochoo/">
 <!-- share previews (Open Graph for iMessage, Slack, Facebook, etc.; Twitter card for X) -->
@@ -23,7 +27,8 @@
 <meta name="twitter:image" content="https://mvanderlinde.github.io/choochoo/og-image.jpg">
 <meta name="twitter:image:alt" content="A red steam engine pulling colourful coaches through green hills">
 <style>
-  html, body { margin: 0; height: 100%; overflow: hidden; background: #cfe6ff; font-family: system-ui, -apple-system, sans-serif; user-select: none; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #cfe6ff; font-family: system-ui, -apple-system, sans-serif; user-select: none;
+    -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; touch-action: none; overscroll-behavior: none; }
   canvas { display: block; }
   #start { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
     background: rgba(40, 90, 160, .55); color: #fff; font-size: 72px; font-weight: 800; text-shadow: 0 4px 0 rgba(0,0,0,.25);
@@ -38,6 +43,25 @@
     text-shadow: 0 3px 0 rgba(0,0,0,.3); transition: opacity .5s; pointer-events: none; opacity: 0; white-space: nowrap; }
   #pax { position: fixed; top: 16px; left: 16px; font-size: 34px; background: rgba(255,255,255,.55); border-radius: 18px; padding: 6px 14px; pointer-events: none; max-width: 45vw; }
   #weather { position: fixed; top: 14px; right: 18px; font-size: 44px; pointer-events: none; text-shadow: 0 2px 6px rgba(0,0,0,.25); }
+  /* touch screens: big buttons for little fingers (only shown once we know it's a touch screen) */
+  .pad { display: none; position: fixed; z-index: 5; width: var(--b); height: var(--b); border-radius: 50%; align-items: center; justify-content: center;
+    font-size: calc(var(--b) * .55); font-weight: 900; color: #fff; border: 5px solid rgba(255,255,255,.85); box-shadow: 0 6px 0 rgba(0,0,0,.25);
+    transition: transform .1s, box-shadow .1s; touch-action: none; }
+  .pad.down { transform: translateY(4px) scale(.94); box-shadow: 0 2px 0 rgba(0,0,0,.25); }
+  :root { --b: min(120px, 21vmin); --gap: 14px;
+    --l: max(var(--gap), env(safe-area-inset-left)); --r: max(var(--gap), env(safe-area-inset-right)); --bot: max(var(--gap), env(safe-area-inset-bottom)); }
+  #go { right: var(--r); bottom: var(--bot); background: #2fbf4a; }
+  #slow { left: var(--l); bottom: var(--bot); background: #e0453a; }
+  #toot { right: var(--r); bottom: calc(var(--bot) + var(--b) + var(--gap) * 1.5); background: #f2a71b; --b: min(96px, 17vmin); }
+  #cam { right: var(--r); top: calc(max(var(--gap), env(safe-area-inset-top)) + 64px); background: rgba(40,90,160,.6); --b: min(70px, 13vmin); font-size: calc(var(--b) * .5); border-width: 3px; }
+  body.touch .pad { display: flex; }
+  body.touch #help { display: none; }
+  body.touch #arrows { bottom: var(--bot); gap: var(--gap); }
+  body.touch .arrow { pointer-events: auto; touch-action: none; width: var(--b); height: var(--b); font-size: calc(var(--b) * .6); }
+  body.touch #pax { left: var(--l); top: max(16px, env(safe-area-inset-top)); }
+  body.touch #weather { right: var(--r); top: max(14px, env(safe-area-inset-top)); }
+  /* phones held upright: not enough room for all four along the bottom, so the arrows go up a row */
+  @media (max-width: 640px) { body.touch #arrows { bottom: calc(var(--bot) + var(--b) + var(--gap) * 2); } }
   #help { position: fixed; right: 12px; bottom: 10px; font-size: 13px; color: rgba(0,0,0,.55); pointer-events: none; }
 </style>
 <script type="importmap">
@@ -52,7 +76,11 @@
 <div id="pax"></div>
 <div id="weather"></div>
 <div id="hint">Press ⬆️ to go!</div>
-<div id="arrows"><div class="arrow" id="aL">⬅</div><div class="arrow" id="aR">➡</div></div>
+<div id="arrows"><div class="arrow" id="aL" data-key="ArrowLeft">⬅</div><div class="arrow" id="aR" data-key="ArrowRight">➡</div></div>
+<div class="pad" id="slow" data-key="ArrowDown">⬇</div>
+<div class="pad" id="go" data-key="ArrowUp">⬆</div>
+<div class="pad" id="toot" data-key=" ">📯</div>
+<div class="pad" id="cam" data-key="c">🎥</div>
 <div id="help">⬆ go · ⬇ slow · ⬅ ➡ pick track · space horn &amp; crossing lights · C camera · F fullscreen</div>
 <script type="module" src="src/main.js"></script>
 </body>

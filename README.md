@@ -50,6 +50,8 @@ Add `?seed=123` to the URL to replay a particular world, `?hour=19` to start at 
 | C | Change camera (chase / orbit / cab / high) |
 | F | Fullscreen |
 
+On a phone or tablet, big buttons appear instead: hold the green ⬆ to go and the red ⬇ to slow down, and tap ⬅ / ➡ for the junctions, 📯 for the horn and 🎥 to change the camera. Tapping anywhere else rings the bell. Adding the page to the home screen makes it full screen. Add `?touch` to the URL to show the buttons on a computer.
+
 ## Code map
 - `src/noise.js`: shared noise and math helpers
 - `src/biomes.js`: the biome regions (jittered cells with blended borders) and the ocean coastlines

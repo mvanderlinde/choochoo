@@ -84,7 +84,17 @@ window.game = { train, net, stations, terrain, roads, weather, dayNight, depots 
 const held = new Set();
 let started = false;
 const startEl = document.getElementById('start');
+// touch screens get big on-screen buttons (index.html shows them once body has the touch class)
+let touch = false;
+function useTouch() {
+  if (touch) return;
+  touch = true;
+  document.body.classList.add('touch');
+  startEl.innerHTML = '🚂 Choo Choo!<small>Tap to play</small>';
+}
 startEl.innerHTML = '🚂 Choo Choo!<small>Click or press any key to play</small>';
+if (new URLSearchParams(location.search).has('touch') || matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0 && !matchMedia('(pointer: fine)').matches) useTouch();
+addEventListener('pointerdown', (e) => { if (e.pointerType === 'touch') useTouch(); sound.ctx?.resume?.(); }, true);
 function start() {
   if (started) return;
   started = true;
@@ -98,13 +108,10 @@ startEl.addEventListener('click', start);
 
 let camMode = 0;
 const CAM_MODES = 4;
-addEventListener('keydown', (e) => {
-  if ([' ', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) e.preventDefault();
-  if (e.metaKey || e.ctrlKey || e.altKey) return;
-  held.add(e.key);
-  if (e.repeat) return;
+// what each key (or touch button, which pretends to be a key) does when pressed
+function press(key) {
   start();
-  switch (e.key) {
+  switch (key) {
     case ' ': // the one action button: toot, and turn on the lights at any crossing coming up
       sound.horn();
       for (const c of crossingsAhead()) if (c.dist > -70 && c.dist < 330) roads.activate(c.road);
@@ -117,9 +124,39 @@ addEventListener('keydown', (e) => {
       if (document.fullscreenElement) document.exitFullscreen();
       else document.documentElement.requestFullscreen?.();
       break;
-    default: if (e.key.length === 1) sound.ding(); // toddler key-mashing = bell
+    default: if (key.length === 1) sound.ding(); // toddler key-mashing = bell
   }
+}
+addEventListener('keydown', (e) => {
+  if ([' ', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) e.preventDefault();
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  held.add(e.key);
+  if (e.repeat) return;
+  press(e.key);
 });
+// Touch buttons: held down for as long as a finger is on them (⬆ and ⬇ work like holding the key).
+for (const el of document.querySelectorAll('[data-key]')) {
+  const key = el.dataset.key;
+  const fingers = new Set();
+  const up = (e) => {
+    fingers.delete(e.pointerId);
+    if (!fingers.size) { held.delete(key); el.classList.remove('down'); }
+  };
+  el.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    try { el.setPointerCapture(e.pointerId); } catch { /* not a live pointer */ }
+    fingers.add(e.pointerId);
+    held.add(key);
+    el.classList.add('down');
+    press(key);
+  });
+  el.addEventListener('pointerup', up);
+  el.addEventListener('pointercancel', up);
+  el.addEventListener('contextmenu', (e) => e.preventDefault()); // long press would open a menu
+}
+// tapping anywhere else on the world rings the bell, like mashing the letter keys
+renderer.domElement.addEventListener('pointerdown', (e) => { if (started && e.pointerType === 'touch') sound.ding(); });
+addEventListener('contextmenu', (e) => { if (touch) e.preventDefault(); });
 addEventListener('keyup', (e) => held.delete(e.key));
 addEventListener('blur', () => held.clear());
 addEventListener('resize', () => {
@@ -197,9 +234,9 @@ function updateStations(next, crossing) {
   if (train.speed > 0.5) everMoved = true;
   if (!started) setHint('');
   else if (activeStop) setHint(`🚉 ${activeStop.name}`); // the station's name while people get on and off
-  else if (!everMoved) setHint('Press ⬆️ to go!');
-  else if (crossing && !crossing.road.active && crossing.dist > 0 && crossing.dist < 200 && (!ahead || crossing.dist < next.dist) && train.speed > 0.05) setHint('🚗 Press SPACE');
-  else if (ahead && next.dist < 250 && train.speed > 0.05) setHint('🚉 Press ⬇️');
+  else if (!everMoved) setHint(touch ? 'Tap ⬆️ to go!' : 'Press ⬆️ to go!');
+  else if (crossing && !crossing.road.active && crossing.dist > 0 && crossing.dist < 200 && (!ahead || crossing.dist < next.dist) && train.speed > 0.05) setHint(touch ? '🚗 Tap 📯' : '🚗 Press SPACE');
+  else if (ahead && next.dist < 250 && train.speed > 0.05) setHint(touch ? '🚉 Tap ⬇️' : '🚉 Press ⬇️');
   else setHint('');
 }
 let everMoved = false;
